@@ -3,11 +3,10 @@
 // sub-agent's chat host (labeled herdr-chat.chat by bin/herdr-chat-subagent): Open
 // as chat (the chat dialog, in place of the Rust peek that shows its
 // transcript) and Open as a chat tab. For an agent's TUI (Pi, Claude Code or
-// Codex, idle or done), a sub-agent or a top-level TUI in its own pane:
+// Codex, idle or done; on this computer or another machine), a sub-agent or a top-level TUI in its own pane:
 // Continue as chat, which hands it over to a chat on its session (new-chat's
 // continueAsChat, run by the layout's always-shown new-chat copy, since this
-// menu closes first); disabled, with "Wait for the run to end", while it works,
-// and with "On <machine>" for another machine's agent.
+// menu closes first); disabled, with "Wait for the run to end", while it works.
 // Every other menu is the shipped one, drawn by it. The layout's root
 // terminal_menu points here (install.sh).
 
@@ -34,20 +33,10 @@ export function cantContinue(t) {
   if (!t || t.state !== "live") return { why: "not live" };
   if (t.labels?.["herdr-chat.chat"]) return { why: "already a chat" };
   if (!agentOf(t)) return { why: "not an agent's TUI" };
-  // Another machine's agent ("box/t7"): it runs there, and a chat's host would run here.
-  const machine = machineOf(t.address);
-  if (machine) return { why: `This agent runs on ${machine}: chats run on this computer only.`, note: `On ${machine}` };
   const st = word(t.status);
   if (st === "working" || st === "blocked") return { why: "Wait for the run to end, then Continue as chat.", note: "Wait for the run to end" };
   if (!["idle", "done"].includes(st)) return { why: `status ${st}` };
   return null;
-}
-
-/** The machine of another computer's terminal address ("box" for "box/t7"), null for one of this computer's
- *  (hc addresses this computer's terminals by bare ID). A copy of new-chat's. */
-export function machineOf(address) {
-  const s = String(address ?? ""), at = s.indexOf("/");
-  return at > 0 ? s.slice(0, at) : null;
 }
 
 /** An agent's TUI (sub-agent or top-level) the menu shows Continue as chat for: {address, note}, else null.

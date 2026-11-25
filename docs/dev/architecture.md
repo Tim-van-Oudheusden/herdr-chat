@@ -134,6 +134,46 @@ Then:
   arguments). The parent sees one exit note for the old terminal; after
   that `hc send`, `hc wait` and `hc read` by name reach the chat.
 
+## Other machines
+
+A chat with an agent on another machine (`hc machine`) runs its host there,
+next to the agent's process, TTY and session files (`mods/chat/remote.js`):
+
+```
+this computer                               the machine
+ mod pane "chat" ── ws://127.0.0.1:<p> ──┐
+ herdr-chat-host tunnel (hc terminal) ───┴─ ssh <target> / <via> ─► herdr-chat-host pipe ─► 127.0.0.1:<wsPort>
+                                                                     herdr-chat-host serve (hc run --on)
+```
+
+- **Which machine:** the chat's `machine` prop (New chat in that machine's
+  space, Continue as chat on its TUI), else the machine of a sub-agent's
+  address (`box/t7`).
+- **Its herdr-chat:** settings.json `machines.<name>.host` (and `node`, `env`,
+  per-agent `command`, `args`, `tui`). Paths from this computer's
+  `config.json` are never sent there. The host's `--state-dir` and
+  `--app-home` are that machine's (its `$HERDR_APP_HOME`, else
+  `~/.config/herdr-app`, as its sub-agents' hosts find it); its registry is
+  read with `readTextFile(…, {on})`, and its `terminal` (bare, `t7`) is the
+  app's `box/t7`.
+- **The link:** `herdr-chat-host tunnel` listens on 127.0.0.1 here and, per
+  connection, runs the machine's transport (ssh to its target, or its
+  `--via` command) with `herdr-chat-host pipe --port <wsPort>` there. Its
+  state file (`data/herdr-chat/tunnels/<machine>-<wsPort>.json`) is reused by
+  every chat of that host; it exits once nothing has been connected for a
+  minute. The token still guards the WebSocket.
+- **The layout document:** a remote space's panes are in that machine's
+  core document. Reads and writes (`hc connect`) run there, and ids are
+  translated: the app's `box/p3` is the document's and the labels' `p3`. So
+  the hidden host pane, the host's `herdr.*` labels and the host's own pane
+  watch work as here. The orphan sweep judges a remote host by that machine's
+  document and this computer's, and only when both could be read.
+- **Continue as chat:** `tui-session`, the SIGTERM, the liveness check and
+  `tui-busy` run on the machine (`exec … {on}`).
+- **Not there:** pasting or dropping images and files (they are this
+  computer's), herdr-nvim (the machine's `$EDITOR` opens files instead), and
+  the update restart (the host is that machine's install).
+
 ## The install (`install.sh`, `install/app.sh`, `install/`)
 
 Each change is recorded under `data/herdr-chat/` in the app home, so

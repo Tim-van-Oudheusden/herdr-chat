@@ -7,7 +7,7 @@
 
 import * as fs from "fs/promises";
 import { readTextFile } from "herdr";
-import { stateDir } from "./connection.js";
+import { stateDir } from "./paths.js";
 
 export class Debug {
   // onEnabled(): once, when the dump turns out to be enabled (to start traces).

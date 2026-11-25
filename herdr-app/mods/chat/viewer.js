@@ -30,7 +30,7 @@ import { div, image } from "gpui-kit";
 import * as fs from "fs/promises";
 import { h_flex, v_flex } from "gpui-base";
 import { appHome, closeOverlay, nextCommand, props, readTextFile, theme } from "herdr";
-import { stateDir } from "./connection.js";
+import { stateDir } from "./paths.js";
 import { Debug } from "./debug.js";
 import { homeRel, uiScale } from "./util.js";
 import { PLATFORM } from "./platform.js";

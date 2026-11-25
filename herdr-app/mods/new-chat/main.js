@@ -13,7 +13,7 @@
 // key or another mod runs while no launcher is open:
 // - `new-chat.open`: the launcher (as mod.open:new-chat; again: closes it);
 // - `new-chat.pi`, `new-chat.claude`, `new-chat.codex`: that agent's chat, in a new tab
-//   (not in another machine's space or terminal: it says so);
+//   (in another machine's space or terminal: on that machine, chat/remote.js);
 // - `new-chat.continue:<terminal>`: chat-menu's Continue as chat (an agent's
 //   TUI handed over to a chat on its session, see continueAsChat);
 //   `new-chat.continue`: the same on the focused terminal (the "continue" key);
@@ -41,13 +41,12 @@ const PREFS = () => `${appHome()}/data/herdr-chat/launcher.json`;
 async function openChat(provider) {
   const f = focused();
   const space = spaces().find((s) => s.id === f?.space);
-  // Another machine's (`hc machine`) focused terminal or space: its folder is there, a chat's host would run here.
-  // A focused layout block or window terminal (pane null) isn't the space's; Herdr's own mods tell it the same way.
-  const [what, machine] = f?.pane === null ? ["This terminal", machineOf(f.terminal)] : ["This space", space?.machine ?? null];
-  if (machine) throw new Error(`${what} is on ${machine}: chats run on this computer only.`);
+  // Another machine's (`hc machine`) focused terminal or space: its folder is there, and so is the chat's host
+  // (chat/remote.js). A focused layout block or window terminal (pane null) isn't the space's; Herdr's own mods tell it the same way.
+  const machine = f?.pane === null ? machineOf(f.terminal) : space?.machine ?? null;
   const cwd = f?.cwd || space?.folder || null;
   const chat = `c-${randomBytes(4).toString("hex")}`;
-  run("tab.new", { name: provider, mod: "chat", props: { chat, provider, ...(cwd ? { cwd } : {}) } });
+  run("tab.new", { name: provider, mod: "chat", props: { chat, provider, ...(machine ? { machine } : {}), ...(cwd ? { cwd } : {}) } });
   await fs.mkdir(`${appHome()}/data/herdr-chat`, { recursive: true });
   await fs.writeFile(PREFS(), JSON.stringify({ last: provider }));
 }
@@ -80,9 +79,10 @@ export function agentOf(t) {
 
 /**
  * Why a terminal can't continue as a chat (null: it can): a live agent TUI
- * (Pi, Claude Code, Codex) of this computer's, idle or done. `why` says why
- * not; `note`, when set, is an agent's TUI that can't continue now (another
- * machine's, or while it works): chat-menu shows the item disabled with it,
+ * (Pi, Claude Code, Codex, omp), idle or done, on this computer or another
+ * machine (the chat's host then runs there). `why` says why
+ * not; `note`, when set, is an agent's TUI that can't continue now (while it
+ * works): chat-menu shows the item disabled with it,
  * and `why` is the sentence to show. Which session it has open is the host's
  * to find (continueAsChat). Shared with chat-menu (a copy there: mods can't
  * import each other; keep the two the same).
@@ -91,9 +91,6 @@ export function cantContinue(t) {
   if (!t || t.state !== "live") return { why: "not live" };
   if (t.labels?.["herdr-chat.chat"]) return { why: "already a chat" };
   if (!agentOf(t)) return { why: "not an agent's TUI" };
-  // Another machine's agent ("box/t7"): it runs there, and a chat's host would run here.
-  const machine = machineOf(t.address);
-  if (machine) return { why: `This agent runs on ${machine}: chats run on this computer only.`, note: `On ${machine}` };
   const st = word(t.status);
   if (st === "working" || st === "blocked") return { why: "Wait for the run to end, then Continue as chat.", note: "Wait for the run to end" };
   if (!["idle", "done"].includes(st)) return { why: `status ${st}` };
@@ -101,7 +98,7 @@ export function cantContinue(t) {
 }
 
 /** The machine of another computer's terminal address ("box" for "box/t7"), null for one of this computer's
- *  (hc addresses this computer's terminals by bare ID). Copied in chat-menu. */
+ *  (hc addresses this computer's terminals by bare ID). Copied in chat-menu and chat/remote.js. */
 export function machineOf(address) {
   const s = String(address ?? ""), at = s.indexOf("/");
   return at > 0 ? s.slice(0, at) : null;
@@ -115,21 +112,41 @@ async function chatConfig() {
 }
 
 /**
- * The TUI's process and the session it has open, from the host, given the terminal (`hc get --json`): {pid, group,
- * session, model, thinking, args}. The host finds the agent's process (host/providers/tui.ts tuiProcess): the
- * foreground program, the terminal's own, or one its command started under the foreground (then `group` is that
- * command's process group, for tui-busy); then the session, each agent its own way (host/providers/<agent>/tui.ts).
+ * The TUI's process and the session it has open, from the host on the TUI's machine (null: this computer), given
+ * the terminal (`hc get --json`): {pid, group, session, model, thinking, args}. The host finds the agent's process
+ * (host/providers/tui.ts tuiProcess): the foreground program, the terminal's own, or one its command started under
+ * the foreground (then `group` is that command's process group, for tui-busy); then the session, each agent its own
+ * way (host/providers/<agent>/tui.ts).
  */
-async function tuiSession(cfg, agent, info, cwd, label) {
+async function tuiSession(machine, agent, info, cwd, label) {
   const terminal = { pid: info.pid, argv: info.argv, foreground: info.foreground && { pid: info.foreground.pid, argv: info.foreground.argv } };
-  const r = await host(cfg, ["tui-session", "--provider", agent, "--terminal", JSON.stringify(terminal), "--cwd", cwd, ...(label ? ["--label", label] : [])]);
+  const r = await hostExec(machine, ["tui-session", "--provider", agent, "--terminal", JSON.stringify(terminal), "--cwd", cwd, ...(label ? ["--label", label] : [])]);
   if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().replace(/^herdr-chat-host: /, "") || "the host couldn't tell the TUI's session");
   return JSON.parse(r.stdout);
 }
 
-const host = (cfg, args) => exec("/usr/bin/env", [...(cfg.node ? [`HERDR_CHAT_NODE=${cfg.node}`] : []), cfg.host, ...args]);
+/**
+ * The herdr-chat on another machine: {host, node}, from settings.json "machines".<name> ("host" required, "node").
+ * The same rule as chat/remote.js machineSetup (a copy: mods can't import each other).
+ */
+async function machineHost(machine) {
+  let mine = {};
+  try { mine = JSON.parse((await readTextFile(`${appHome()}/data/herdr-chat/settings.json`)) ?? "{}")?.machines?.[machine] ?? {}; } catch {}
+  const host = typeof mine.host === "string" && mine.host ? mine.host : null;
+  const how = `name it in settings.json: "machines": {"${machine}": {"host": "<herdr-chat there>/bin/herdr-chat-host"}} (README "Other machines")`;
+  if (!host) throw new Error(`This agent runs on ${machine}, and so would its chat's host: install herdr-chat there and ${how}`);
+  if ((await readTextFile(host, { on: machine }).catch(() => null)) === null) throw new Error(`${machine} has no ${host}: ${how}`);
+  return { host, node: typeof mine.node === "string" && mine.node ? mine.node : null };
+}
 
-const alive = async (pid) => (await exec("kill", ["-0", String(pid)])).code === 0;
+/** `herdr-chat-host <args>`: this computer's install, or on `machine` that machine's. */
+async function hostExec(machine, args) {
+  const h = machine ? await machineHost(machine) : await chatConfig();
+  return exec("/usr/bin/env", [...(h.node ? [`HERDR_CHAT_NODE=${h.node}`] : []), h.host, ...args], machine ? { on: machine } : undefined);
+}
+
+/** Whether a process runs (on `machine`, null: this computer). */
+const alive = async (pid, machine) => (await exec("kill", ["-0", String(pid)], machine ? { on: machine } : undefined)).code === 0;
 
 /**
  * Continue as chat (research subagent-chat.md §F): an agent's TUI becomes a
@@ -141,6 +158,8 @@ const alive = async (pid) => (await exec("kill", ["-0", String(pid)])).code === 
  *   <file>): the parent sees one exit note, then its `hc send/wait <name>`
  *   reach the host. Then the chat dialog.
  * - A top-level TUI (continueInPlace): the chat takes its pane's place.
+ * On another machine, all of it happens there: its host finds the session, the agent's signal and the new host
+ * run there, and the chat connects through a tunnel (chat/remote.js).
  * `addr` empty: the focused terminal (the "continue" key).
  */
 export async function continueAsChat(addr, cx) {
@@ -152,18 +171,22 @@ export async function continueAsChat(addr, cx) {
   if (g.code !== 0) throw new Error(`hc get ${t.address}: ${g.stderr.trim()}`);
   const info = JSON.parse(g.stdout);
   const cwd = info.foreground?.cwd || t.cwd || "/";
-  const cfg = await chatConfig();
-  const found = await tuiSession(cfg, agent, info, cwd, t.labels?.["herdr-chat.session"] ?? null);
-  if (!t.parent) return continueInPlace(t, agent, cfg, cwd, found, cx);
-  const launcher = cfg.host.replace(/herdr-chat-host$/, "herdr-chat-subagent");
+  const machine = machineOf(t.address);
+  const found = await tuiSession(machine, agent, info, cwd, t.labels?.["herdr-chat.session"] ?? null);
+  if (!t.parent) return continueInPlace(t, agent, machine, cwd, found, cx);
+  const h = machine ? await machineHost(machine) : await chatConfig();
+  const launcher = h.host.replace(/herdr-chat-host$/, "herdr-chat-subagent");
   const kill = await hc(["kill", t.address]);
   if (kill.code !== 0) throw new Error(`hc kill ${t.address}: ${kill.stderr.trim()}`);
   // Its name is free once the old terminal has ended.
   for (let i = 0; i < 50 && term(t.address)?.state === "live"; i++) await cx.sleep(100);
   // The model and thinking as the agent's own arguments: a sub-agent's host isn't restarted by a chat later.
   const args = found.args ?? [];
-  const r = await hc(["run", "--bg", "--json", "--parent", t.parent, ...(t.name ? ["--name", t.name] : []), "--cwd", cwd,
-    "--", launcher, "--provider", agent, "--session", found.session, ...(args.length ? ["--", ...args] : [])]);
+  // (On another machine, its own node, if settings.json names one; this computer's launcher reads config.json.
+  // There the parent is named as that machine's core knows it, bare.)
+  const parent = machine && t.parent.startsWith(`${machine}/`) ? t.parent.slice(machine.length + 1) : t.parent;
+  const r = await hc(["run", ...(machine ? ["--on", machine] : []), "--bg", "--json", "--parent", parent, ...(t.name ? ["--name", t.name] : []), "--cwd", cwd,
+    "--", ...(machine && h.node ? ["/usr/bin/env", `HERDR_CHAT_NODE=${h.node}`] : []), launcher, "--provider", agent, "--session", found.session, ...(args.length ? ["--", ...args] : [])]);
   if (r.code !== 0) throw new Error(`hc run: ${r.stderr.trim() || r.stdout.trim()}`);
   const next = JSON.parse(r.stdout).address;
   // The launcher labels its terminal with the chat id once it starts.
@@ -185,28 +208,29 @@ export async function continueAsChat(addr, cx) {
  * TUI's pane closes, so the chat takes its place, unless its shell runs
  * something else then (it stays, and says so).
  */
-export async function continueInPlace(t, agent, cfg, cwd, found, cx) {
+export async function continueInPlace(t, agent, machine, cwd, found, cx) {
   const pid = found.pid;
   const pane = panes().find((p) => p.terminal === t.address);
   if (!pane) throw new Error(`${t.address} has no pane in a tab`);
   const before = new Set(panes().map((p) => p.pane));
   const chat = `c-${randomBytes(4).toString("hex")}`;
   run("pane.split", { direction: "right", pane: pane.pane, mod: "chat",
-    props: { chat, provider: agent, session: found.session, afterPid: pid, cwd, ...(found.model ? { model: found.model } : {}), ...(found.thinking ? { thinking: found.thinking } : {}) } });
+    props: { chat, provider: agent, ...(machine ? { machine } : {}), session: found.session, afterPid: pid, cwd, ...(found.model ? { model: found.model } : {}), ...(found.thinking ? { thinking: found.thinking } : {}) } });
   let mine = null;
   for (let i = 0; i < 50 && !mine; i++) { mine = panes().find((p) => !before.has(p.pane) && p.mod === "chat" && p.tab === pane.tab); if (!mine) await cx.sleep(100); }
   if (!mine) throw new Error("the chat's pane didn't appear beside the TUI");
   run("pane.focus", { pane: mine.pane });
-  const k = await exec("kill", ["-TERM", String(pid)]);
+  // (Its pid is on its machine: the signal goes there.)
+  const k = await exec("kill", ["-TERM", String(pid)], machine ? { on: machine } : undefined);
   if (k.code !== 0) throw new Error(`kill -TERM ${pid}: ${k.stderr.trim()}`);
-  for (let i = 0; i < 100 && (await alive(pid)); i++) await cx.sleep(100);
-  if (await alive(pid)) {
+  for (let i = 0; i < 100 && (await alive(pid, machine)); i++) await cx.sleep(100);
+  if (await alive(pid, machine)) {
     toast({ title: "Continue as chat", body: `${NAMES[agent]} (pid ${pid}) didn't quit in 10 s: the chat waits for it (resume there once it's gone).`, level: "warning" });
     return mine.pane;
   }
   // A shell left with its prompt: nothing else runs in it, so it goes. A program
   // that ended with the agent: the pane shows its exit, so it goes too.
-  const running = await stillRuns(t.address, cfg, found.group, cx);
+  const running = await stillRuns(t.address, machine, found.group, cx);
   if (running) {
     toast({ title: "Continue as chat", body: `The TUI's terminal now runs ${running}: its pane stays.`, level: "info" });
     return mine.pane;
@@ -224,9 +248,9 @@ export async function continueInPlace(t, agent, cfg, cwd, found, cx) {
  * - The terminal's command ran it, in a shell without job control (`group`: tui-session's): that shell is the
  *   foreground all along, so the host tells (`tui-busy`: what the shell went on to run).
  */
-async function stillRuns(address, cfg, group, cx) {
+async function stillRuns(address, machine, group, cx) {
   if (group) {
-    const r = await host(cfg, ["tui-busy", "--group", JSON.stringify(group), "--within", "3000"]);
+    const r = await hostExec(machine, ["tui-busy", "--group", JSON.stringify(group), "--within", "3000"]);
     if (r.code !== 0) throw new Error(`can't tell whether the TUI's terminal is idle: ${(r.stderr || r.stdout).trim().replace(/^herdr-chat-host: /, "")}`);
     return JSON.parse(r.stdout).running;
   }
