@@ -272,6 +272,7 @@ fi
 . "$E2E/flows-zoom.sh"
 . "$E2E/flows-subagent.sh" # it switches the app to a clone of main
 . "$E2E/flows-update.sh" # after subagent: it needs the floating new-chat block
+. "$E2E/flows-remote.sh" # after subagent: its helpers, and the floating new-chat block
 . "$E2E/flows-core.sh" # last: it restarts the core
 # E2E_FLOW=<file>: one more flow, sourced here with every helper above (a bug's replay, kept outside the
 # repo's flows). `tests/e2e/run.sh <art> none` runs it alone.
