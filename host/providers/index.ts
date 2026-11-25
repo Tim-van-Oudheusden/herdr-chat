@@ -2,9 +2,11 @@
 import { PiAdapter } from "./pi/adapter.ts";
 import { ClaudeAdapter } from "./claude/adapter.ts";
 import { CodexAdapter } from "./codex/adapter.ts";
+import { OmpAdapter } from "./omp/adapter.ts";
 import { piTuiSession } from "./pi/tui.ts";
 import { claudeTuiSession } from "./claude/tui.ts";
 import { codexTuiSession } from "./codex/tui.ts";
+import { ompTuiSession } from "./omp/tui.ts";
 import type { ProviderAdapter, AdapterOptions } from "./types.ts";
 import { processTable, tuiProcess, type TerminalView, type TuiFound, type TuiQuery, type TuiSession } from "./tui.ts";
 
@@ -23,6 +25,7 @@ export const PROVIDERS: Record<string, Factory> = {
   pi: { command: "pi", label: "Pi", create: (o) => new PiAdapter(o), tuiSession: piTuiSession },
   claude: { command: "claude", label: "Claude Code", create: (o) => new ClaudeAdapter(o), tuiSession: claudeTuiSession },
   codex: { command: "codex", label: "Codex", create: (o) => new CodexAdapter(o), tuiSession: codexTuiSession },
+  omp: { command: "omp", label: "omp", create: (o) => new OmpAdapter(o), tuiSession: ompTuiSession },
 };
 
 export function tuiSession(provider: string, q: TuiQuery): TuiSession {

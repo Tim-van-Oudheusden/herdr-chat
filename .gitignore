@@ -11,3 +11,6 @@ node_modules/
 **/jsconfig.json
 /dist/
 __pycache__/
+# the omp probe's output (host/providers/omp/research/probe.mjs)
+/host/providers/omp/research/events.jsonl
+/host/providers/omp/research/stderr.txt
