@@ -1,4 +1,4 @@
-// The Pi child process: spawn in its own process group, LF framing with a size
+// The Pi child process (omp's too: it speaks the same transport): spawn in its own process group, LF framing with a size
 // cap, request correlation, stderr tail, checked teardown.
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
@@ -15,15 +15,20 @@ export type SpawnOptions = {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /** The agent's name in errors ("Pi"). */
+  label?: string;
 };
 
 type Pending = { resolve: (data: unknown) => void; reject: (e: Error) => void; timer?: NodeJS.Timeout; command: string };
 
 export class PiRpcError extends AgentError {
   command: string;
-  constructor(command: string, message: string, exited = false) {
+  /** The machine-readable reason a failed response carries (omp: `session_busy`, `stale_cursor`). */
+  code: string | undefined;
+  constructor(command: string, message: string, exited = false, code?: string) {
     super(message, exited);
     this.command = command;
+    this.code = code;
   }
 }
 
@@ -34,7 +39,11 @@ export class PiProcess {
   pid: number | undefined;
   exited = false;
   exitInfo: ExitInfo | null = null;
+  /** The agent's name in errors. */
+  readonly label: string;
   private nextId = 0;
+  /** The id of the request `request` sent last (set before it returns): omp's `prompt_result` names its prompt by it. */
+  lastId: string | null = null;
   private pending = new Map<string, Pending>();
   private stderrTail = "";
   private exitWaiters: ((e: ExitInfo) => void)[] = [];
@@ -44,6 +53,7 @@ export class PiProcess {
   onBadLine: (line: string) => void = () => {};
 
   constructor(opts: SpawnOptions) {
+    this.label = opts.label ?? "Pi";
     this.child = spawn(opts.command, opts.args, {
       cwd: opts.cwd,
       env: opts.env,
@@ -87,7 +97,7 @@ export class PiProcess {
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
       if (p.timer) clearTimeout(p.timer);
-      p.reject(new PiRpcError(p.command, "Pi exited", true));
+      p.reject(new PiRpcError(p.command, `${this.label} exited`, true));
     }
     this.onExit(info);
     for (const w of this.exitWaiters.splice(0)) w(info);
@@ -97,7 +107,8 @@ export class PiProcess {
     return this.stderrTail;
   }
 
-  private route(line: string): void {
+  /** One LF-framed line from stdout. omp's process decodes its chunked frames here first. */
+  protected route(line: string): void {
     let rec: unknown;
     try {
       rec = JSON.parse(line);
@@ -115,20 +126,20 @@ export class PiProcess {
       this.pending.delete(r.id);
       if (p.timer) clearTimeout(p.timer);
       if (r.success === true) p.resolve(r.data);
-      else p.reject(new PiRpcError(String(r.command ?? p.command), typeof r.error === "string" ? r.error : `${p.command} failed`));
+      else p.reject(new PiRpcError(String(r.command ?? p.command), typeof r.error === "string" ? r.error : `${p.command} failed`, false, typeof r.code === "string" ? r.code : undefined));
       return;
     }
     this.onEvent(r);
   }
 
-  private oversized(o: Oversized): void {
+  protected oversized(o: Oversized): void {
     // A response leads with its id: fail only that request.
     const m = /^\{"id":"(h\d+)","type":"response"/.exec(o.head);
     if (m && this.pending.has(m[1]!)) {
       const p = this.pending.get(m[1]!)!;
       this.pending.delete(m[1]!);
       if (p.timer) clearTimeout(p.timer);
-      p.reject(new PiRpcError(p.command, `Pi's reply to ${p.command} was too large (${o.size} bytes)`));
+      p.reject(new PiRpcError(p.command, `${this.label}'s reply to ${p.command} was too large (${o.size} bytes)`));
       return;
     }
     this.onOversized(o);
@@ -143,23 +154,24 @@ export class PiProcess {
   /** A command with a correlated reply. `timeoutMs: 0` waits forever (prompt, abort, compact). */
   request(type: string, args: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<unknown> {
     const id = `h${++this.nextId}`;
+    this.lastId = id;
     return new Promise((resolve, reject) => {
       if (this.exited) {
-        reject(new PiRpcError(type, "Pi is not running"));
+        reject(new PiRpcError(type, `${this.label} is not running`));
         return;
       }
       const p: Pending = { resolve, reject, command: type };
       if (timeoutMs > 0) {
         p.timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(new PiRpcError(type, `Pi did not answer ${type} within ${Math.round(timeoutMs / 1000)} s`));
+          reject(new PiRpcError(type, `${this.label} did not answer ${type} within ${Math.round(timeoutMs / 1000)} s`));
         }, timeoutMs);
       }
       this.pending.set(id, p);
       if (!this.write({ id, type, ...args })) {
         this.pending.delete(id);
         if (p.timer) clearTimeout(p.timer);
-        reject(new PiRpcError(type, "Pi is not running"));
+        reject(new PiRpcError(type, `${this.label} is not running`));
       }
     });
   }
