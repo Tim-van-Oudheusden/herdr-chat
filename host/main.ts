@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// herdr-chat-host: serve | run | tui-session | inspect | send | op | build
+// herdr-chat-host: serve | run | tui-session | tui-busy | inspect | send | op | build | tunnel | pipe
 import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -18,6 +18,7 @@ import { parseArgs } from "./args.ts";
 import type { Args } from "./args.ts";
 import { appHomeOf, labelSelf, newChatId, planSubagent } from "./subagent.ts";
 import { readChatConfig } from "./settings.ts";
+import { pipe, tunnel } from "./tunnel.ts";
 import { PaneWatch } from "./panewatch.ts";
 import { hostBuild } from "./build.ts";
 
@@ -37,7 +38,13 @@ herdr-chat-host inspect --chat <id> --state-dir <dir> [--wait 'phase=idle,items>
 herdr-chat-host send    --chat <id> --state-dir <dir> [--mode auto|steer|followUp] [--image <path>]... <text>
 herdr-chat-host op      --chat <id> --state-dir <dir> <op> ['<json args>']
 herdr-chat-host build
-  (this host's {version, build} as JSON: the install records it, so a chat can tell a host older than the install)`;
+  (this host's {version, build} as JSON: the install records it, so a chat can tell a host older than the install)
+herdr-chat-host tunnel --port <port> --state-file <file> [--idle <ms>] -- <transport argv>
+  (a chat whose host is on another machine: listens on 127.0.0.1 here and runs the transport argv per connection,
+   e.g. ssh <machine> herdr-chat-host pipe --port <port>; writes {pid, port, remotePort} to the state file; exits after
+   --idle ms, default 60000, with no connection open)
+herdr-chat-host pipe --port <port>
+  (on the host's machine, the tunnel's far end: stdin/stdout joined to 127.0.0.1:<port>)`;
 
 /** serve's exit when another live host has the chat (claim.ts). */
 const EXIT_CHAT_TAKEN = 3;
@@ -332,6 +339,22 @@ async function main(): Promise<void> {
         const data = await c.req(op, json ? JSON.parse(json) : {}, 120_000);
         process.stdout.write(JSON.stringify(data, null, 2) + "\n");
       });
+    case "pipe": {
+      const port = Number(a.flags.get("port")?.[0]);
+      if (!(port > 0)) die("pipe needs --port <the host's WebSocket port>");
+      await pipe(port);
+      process.exit(0); // stdin may still be open: the connection is what counts
+    }
+    case "tunnel": {
+      const remotePort = Number(a.flags.get("port")?.[0]);
+      const stateFile = a.flags.get("state-file")?.[0];
+      if (!(remotePort > 0) || !stateFile || !a.after.length) die("tunnel needs --port <the host's WebSocket port> --state-file <file> -- <transport argv>");
+      const idleMs = Number(a.flags.get("idle")?.[0] ?? 60_000);
+      const log = (msg: string) => process.stderr.write(`${new Date().toISOString()} tunnel: ${msg}\n`);
+      const { done } = await tunnel({ remotePort, stateFile: resolve(stateFile), argv: a.after, idleMs: idleMs > 0 ? idleMs : 60_000, log });
+      await done;
+      process.exit(0);
+    }
     default:
       process.stdout.write(USAGE + "\n");
       process.exit(a.cmd === "help" || a.cmd === "--help" ? 0 : 2);

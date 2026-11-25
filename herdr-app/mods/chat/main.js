@@ -32,6 +32,7 @@ import { agents, appHome, closeOverlay, focused, hc, home, nextCommand, notify, 
 import { randomBytes } from "crypto";
 import { modPanes, readDoc } from "./place.js";
 import { getDoc, hideHost, locate } from "./hostpane.js";
+import { bare, machineAgent, machineOf, machineSetup, qualify, readRemoteRegistry } from "./remote.js";
 import { SHORTCUTS, actionName, chordOf, errors as keyErrors, keyHint, loadShortcuts, shortcuts, withKey } from "./shortcuts.js";
 import { keepKeys } from "./keymap.js";
 import { Connection, NotTaken, readConfig, readRegistry, registeredHost, runsHost } from "./connection.js";
@@ -85,6 +86,9 @@ export default class HerdrChat extends View {
     this.peekMode = Boolean(p.peek);
     this.provider = p.provider ?? null; // an id of PROVIDERS; null: the registry's, else DEFAULT_PROVIDER
     this.cwd = p.cwd || null;
+    // The agent's machine (`hc machine`; remote.js), null for this computer: its host runs there, the
+    // layout document of its space is that machine's, and paths in it are that machine's.
+    this.machine = p.machine || machineOf(this.sub) || null;
     this.store = new Store();
     this.timeline = new Timeline("herdr-chat-timeline", uiScale);
     this.expanded = new Set();
@@ -140,7 +144,8 @@ export default class HerdrChat extends View {
     });
     this.conn = new Connection({
       chat: this.chat,
-      cwd: this.cwd ?? home(),
+      cwd: this.cwd ?? (this.machine ? null : home()), // (another machine's: its home, once known)
+      machine: this.machine,
       session: p.session ?? null,
       provider: this.provider,
       hostEnv: p.hostEnv ?? null,
@@ -154,7 +159,8 @@ export default class HerdrChat extends View {
       log: (m) => this.log(m),
     });
     if (!this.cwd) this.cwd = p.cwd ?? null;
-    this.updater = new Updater({ sub: Boolean(this.sub), log: (m) => this.log(m) }); // a host older than the install (update.js)
+    // A host older than the install (update.js). Another machine's host is that machine's install, not this one.
+    this.updater = new Updater({ sub: Boolean(this.sub || this.machine), log: (m) => this.log(m) });
     cx.spawn(async (cx) => { await this.updater.load(); this.debug.mark(); cx.notify(); });
     this.conn.start(cx);
     this.commands(cx);
@@ -208,7 +214,7 @@ export default class HerdrChat extends View {
     this.placeTried = Date.now();
     cx.spawn(async (cx) => {
       try {
-        const doc = await readDoc();
+        const doc = await readDoc(this.machine);
         this.docPanes = modPanes(doc, MOD);
         this.docAt = Date.now();
         const live = this.docPanes.filter((x) => x.props?.chat === this.chat).find((x) => panes().some((p) => p.pane === x.pane));
@@ -233,9 +239,9 @@ export default class HerdrChat extends View {
   // No layout document (no hc on PATH?): the host's tab label, else the only chat pane.
   guessPlace() {
     const mine = panes().filter((p) => p.mod === MOD);
-    const hostTab = this.conn.hostTerminal()?.labels?.["herdr.tab"];
+    const hostTab = qualify(this.conn.hostTerminal()?.labels?.["herdr.tab"], this.machine); // (labels on a machine are bare)
     const pane = (hostTab && mine.find((p) => p.tab === hostTab)) || (mine.length === 1 ? mine[0] : null);
-    if (!pane || String(pane.tab).includes("/")) return;
+    if (!pane || machineOf(pane.tab) !== this.machine) return;
     const space = spaces().find((sp) => sp.tabs.some((x) => x.id === pane.tab))?.id;
     if (!space) return;
     this.place = { pane: pane.pane, tab: pane.tab, space };
@@ -383,6 +389,11 @@ export default class HerdrChat extends View {
     }
     if (this.conn.status === "connected" && this.store.loaded) this.syncTheme(cx);
     if (this.svgWanted?.size) this.loadSizes(cx);
+    // Code views dropped by render (released under the chat): made again, from a task (cx.new).
+    if (this.remakeCode) {
+      this.remakeCode = false;
+      cx.spawn(async (cx) => { this.syncCode(cx); this.debug.mark(); cx.notify(); });
+    }
     if (Date.now() - (this.sweptAt ?? 0) > 30000) this.sweepOrphans(cx);
     // Elapsed seconds (thinking, the activity line) while Pi works: data, once a second.
     const sec = Math.floor(Date.now() / 1000);
@@ -422,7 +433,7 @@ export default class HerdrChat extends View {
     }
     const term = this.conn.hostTerminal();
     if (term?.parent) return false; // a sub-agent is its parent's: never restarted from here
-    const label = term?.labels?.["herdr.tab"];
+    const label = qualify(term?.labels?.["herdr.tab"], this.machine);
     const docTab = this.hide?.terminal === term?.address ? this.hide?.tab : null;
     const tab = label || docTab;
     if (!term || !tab || this.placeFrom !== "doc" || !this.place || tab === this.place.tab) return false;
@@ -489,7 +500,7 @@ export default class HerdrChat extends View {
     h.stale = false;
     cx.spawn(async (cx) => {
       try {
-        const { value } = await getDoc();
+        const { value } = await getDoc(this.machine);
         const at = locate(value, this.chat, term.address);
         h.checkedAt = Date.now();
         const was = h.hidden;
@@ -505,7 +516,7 @@ export default class HerdrChat extends View {
           const recent = h.writes.filter((t) => Date.now() - t < 20000);
           if (recent.length >= 3) return this.fallbackHide(term, `the hidden flag didn't stick (${recent.length} writes in 20 s)`, cx);
           // The app's own change goes first; after ~20 s of that (a mismatch inStep can't explain), write anyway.
-          const r = await hideHost(this.place.tab, term.address, { force: (h.waiting ?? 0) >= 20, beforeWrite: () => this.beforeAppRead(term.address, cx) });
+          const r = await hideHost(this.place.tab, term.address, { machine: this.machine, force: (h.waiting ?? 0) >= 20, beforeWrite: () => this.beforeAppRead(term.address, cx) });
           if (r.did === "waiting") {
             h.waits = (h.waits ?? 0) + 1;
             h.waiting = (h.waiting ?? 0) + 1;
@@ -525,7 +536,7 @@ export default class HerdrChat extends View {
         if (!term.labels?.["herdr.tab"] && !h.labeling) {
           h.labeling = true;
           const { space, tab } = this.place;
-          const r = await hc(["label", term.address, `herdr.space=${space}`, `herdr.tab=${tab}`]);
+          const r = await hc(["label", term.address, `herdr.space=${bare(space, this.machine)}`, `herdr.tab=${bare(tab, this.machine)}`]);
           h.labeling = false;
           if (r.code !== 0) this.log(`hc label ${term.address}: ${(r.stderr || r.stdout).trim()}`);
           else this.log(`host ${term.address}: labeled for tab ${tab}`);
@@ -593,7 +604,7 @@ export default class HerdrChat extends View {
       if (term.labels?.["herdr.tab"] || f.labeled) return;
       f.labeled = true;
       const { space, tab } = this.place;
-      cx.spawn(async () => { await hc(["label", term.address, `herdr.space=${space}`, `herdr.tab=${tab}`]); });
+      cx.spawn(async () => { await hc(["label", term.address, `herdr.space=${bare(space, this.machine)}`, `herdr.tab=${bare(tab, this.machine)}`]); });
       return;
     }
     if (px === 0 || (f.resized === pane.pane && Date.now() - f.resizedAt < 3000)) return; // (px: what the document says)
@@ -656,28 +667,39 @@ export default class HerdrChat extends View {
   // - a duplicate: a second host of a chat whose registry names another live
   //   host (from before a host refused to be a chat's second, host/claim.ts);
   // - the shell herdr-core restored in a host's place.
+  // A host on another machine is judged by that machine's document and this computer's (its chat's
+  // pane is in one of them), and only when both could be read: an unreachable machine ends nothing.
   sweepOrphans(cx) {
     this.sweptAt = Date.now();
     cx.spawn(async () => {
-      let doc;
-      try { doc = await readDoc(); } catch { return; }
-      if (!doc?.spaces) return;
-      this.docPanes = modPanes(doc, MOD);
-      this.docAt = Date.now();
-      const chats = new Set(this.docPanes.map((x) => x.props?.chat).filter(Boolean));
+      // A sub-agent (a parent, or the launcher's role=subagent) has no pane by design and is its parent's.
+      const live = terminals().filter((t) => t.state === "live" && t.labels?.["herdr-chat.chat"]
+        && !(runsHost(t) && (t.parent || t.labels["herdr-chat.role"] !== "host")));
+      const docs = new Map(); // machine (null: this computer) → its document, the readable ones
+      for (const m of new Set([null, this.machine, ...live.map((t) => machineOf(t.address))])) {
+        try {
+          const d = await readDoc(m);
+          if (d?.spaces) docs.set(m, d);
+        } catch {}
+      }
+      if (!docs.has(null)) return;
+      if (docs.has(this.machine)) {
+        this.docPanes = modPanes(docs.get(this.machine), MOD);
+        this.docAt = Date.now();
+      }
+      const chats = new Set([...docs.values()].flatMap((d) => modPanes(d, MOD).map((x) => x.props?.chat)).filter(Boolean));
       const registries = new Map(); // chat → its registry entry, read once per sweep
       const toEnd = new Map(); // terminal → why it goes
-      for (const t of terminals()) {
-        const chat = t.labels?.["herdr-chat.chat"];
-        if (t.state !== "live" || !chat) continue;
-        // A sub-agent (a parent, or the launcher's role=subagent) has no pane by design and is its parent's.
-        if (runsHost(t) && (t.parent || t.labels?.["herdr-chat.role"] !== "host")) continue;
+      for (const t of live) {
+        const chat = t.labels["herdr-chat.chat"];
+        const m = machineOf(t.address);
+        if (!docs.has(m)) continue;
         let why = null;
         if (!runsHost(t)) why = `${t.address} is a shell restored in chat ${chat}'s host's place`;
         else if (!chats.has(chat)) why = `orphan host ${t.address} (chat ${chat} has no pane)`;
         else {
-          if (!registries.has(chat)) registries.set(chat, await readRegistry(chat));
-          const host = registeredHost(registries.get(chat));
+          if (!registries.has(chat)) registries.set(chat, m ? await readRemoteRegistry(m, chat).catch(() => null) : await readRegistry(chat));
+          const host = registeredHost(registries.get(chat), m);
           if (host && host.address !== t.address) why = `${t.address} is a second host of chat ${chat} (its registry names ${host.address})`;
         }
         if (!why) continue;
@@ -936,8 +958,10 @@ export default class HerdrChat extends View {
   }
 
   // A clipboard the host can't read at all (Linux: no wl-paste or xclip, no display) answers an
-  // error that says why, shown as it is; an empty one, "no image".
+  // error that says why, shown as it is; an empty one, "no image". A host on another machine would
+  // read that machine's clipboard, not this one's: not asked.
   pasteImage(cx) {
+    if (this.machine) return this.flash(`Images can't be pasted here: the agent runs on ${this.machine}, and the clipboard is this computer's`, cx);
     cx.spawn(async (cx) => {
       try {
         const d = await this.req("clipboard_image", {}, cx);
@@ -952,6 +976,8 @@ export default class HerdrChat extends View {
   }
 
   drop(paths, cx) {
+    // Dropped files are this computer's: a host on another machine can't read them.
+    if (this.machine) return this.flash(`Files can't be dropped here: the agent runs on ${this.machine}`, cx);
     let text = this.composer.value;
     for (const p of paths) {
       if (IMAGE.test(p)) {
@@ -1194,7 +1220,7 @@ export default class HerdrChat extends View {
     const hostEnv = props()?.hostEnv; // (E2E: the fake agent's scenario)
     this.lastNewChat = chat;
     run("tab.new", { name: provider, ...(place?.space ? { space: place.space } : {}), mod: MOD,
-      props: { chat, provider, ...(cwd ? { cwd } : {}), ...(session ? { session } : {}), ...(hostEnv ? { hostEnv } : {}) } });
+      props: { chat, provider, ...(this.machine ? { machine: this.machine } : {}), ...(cwd ? { cwd } : {}), ...(session ? { session } : {}), ...(hostEnv ? { hostEnv } : {}) } });
     this.debug.mark();
   }
 
@@ -1563,7 +1589,7 @@ export default class HerdrChat extends View {
     this.lastOpen = { path: abs, line, at: Date.now(), how: null };
     cx.spawn(async (cx) => {
       try {
-        const r = await openFile({ path: abs, line, cwd: this.cwd ?? this.store.state.cwd, pane: me?.pane, tab: me?.tab, space: this.place?.space });
+        const r = await openFile({ path: abs, line, cwd: this.cwd ?? this.store.state.cwd, pane: me?.pane, tab: me?.tab, space: this.place?.space, machine: this.machine });
         this.lastOpen.how = r.how;
         if (r.terminal) {
           this.editorTerm = { address: r.terminal, at: Date.now(), seen: false };
@@ -1762,6 +1788,8 @@ export default class HerdrChat extends View {
     else if (c === "outside") this.outside(cx);
     else if (c.startsWith("shortcut:")) this.shortcut(c.slice(9), cx);
     else if (c.startsWith("type:")) { this.composer.set(this.composer.value + c.slice(5)); this.updateMenu(cx); } // E2E: when the window drops keys
+    // E2E: the code views released under the chat, as the runtime has done (render's recovery).
+    else if (c === "release-code") { for (const v of this.codeViews.values()) v.entity.release(); this.log(`released ${this.codeViews.size} code views`); }
   }
 
   // ---- terminal hand-offs ----------------------------------------------------------
@@ -1789,10 +1817,10 @@ export default class HerdrChat extends View {
     this.debug.mark();
     cx.spawn(async (cx) => {
       try {
-        const cfg = await readConfig();
         // The TUI's command: the adapter's (e.g. `claude --resume <id>`). The
-        // person's settings `<agent>.tui` replaces the program, keeping its arguments.
-        const prog = cfg.agent(this.providerId()).tui;
+        // person's settings `<agent>.tui` replaces the program, keeping its arguments
+        // (on another machine: settings.json "machines", and it runs there).
+        const prog = this.machine ? machineAgent(await machineSetup(this.machine), this.providerId()).tui : (await readConfig()).agent(this.providerId()).tui;
         let argv;
         if (mode === "session") {
           const d = await this.req("handoff", {}, cx, { timeout: 20000 });
@@ -1800,7 +1828,7 @@ export default class HerdrChat extends View {
           argv = prog ? withProgram(d.argv, prog) : [...d.argv];
         } else argv = prog ? withProgram(utilityArgv, prog) : [...utilityArgv];
         // No herdr.space/tab labels: no pane, so the layout and the chat's tab stay as they are.
-        const r = await hc(["run", "--bg", "--json", "--no-parent", "--name", `chat-tui-${this.chat}`, "--cwd", this.cwd ?? this.store.state.cwd ?? "/",
+        const r = await hc(["run", ...(this.machine ? ["--on", this.machine] : []), "--bg", "--json", "--no-parent", "--name", `chat-tui-${this.chat}`, "--cwd", this.cwd ?? this.store.state.cwd ?? "/",
           "--label", `herdr-chat.tui=${this.chat}`, "--", ...argv]);
         if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim() || "hc run failed");
         this.handoff.terminal = JSON.parse(r.stdout).address;
@@ -1907,7 +1935,7 @@ export default class HerdrChat extends View {
     if (!c) return;
     cx.spawn(async (cx) => {
       try {
-        this.docPanes = modPanes(await readDoc(), MOD);
+        this.docPanes = modPanes(await readDoc(this.machine), MOD);
       } catch {}
       const other = this.docPanes?.find((x) => x.props?.chat === c.chat && panes().some((p) => p.pane === x.pane));
       if (other) {
@@ -1960,15 +1988,16 @@ export default class HerdrChat extends View {
     const k = this.subTerm();
     const all = terminals();
     const parent = k?.parent ? all.find((t) => t.address === k.parent) : null;
-    const tabOf = (addr) => parent?.labels?.["herdr.tab"] ?? panes().find((p) => p.terminal === addr)?.tab ?? null;
+    // (Labels on another machine name its tabs and spaces bare.)
+    const tabOf = (addr) => qualify(parent?.labels?.["herdr.tab"], this.machine) ?? panes().find((p) => p.terminal === addr)?.tab ?? null;
     const ptab = parent ? tabOf(parent.address) : null;
-    const space = parent?.labels?.["herdr.space"] ?? spaces().find((sp) => sp.tabs.some((x) => x.id === ptab))?.id ?? focused()?.space ?? null;
+    const space = qualify(parent?.labels?.["herdr.space"], this.machine) ?? spaces().find((sp) => sp.tabs.some((x) => x.id === ptab))?.id ?? focused()?.space ?? null;
     const name = k?.name || this.displayName();
     const provider = this.store.state.provider ?? this.conn.provider ?? this.provider ?? null;
     cx.spawn(async (cx) => {
       let open = null;
       try {
-        open = modPanes(await readDoc(), MOD).find((x) => x.props?.chat === this.chat && x.props?.subagent && panes().some((p) => p.pane === x.pane));
+        open = modPanes(await readDoc(this.machine), MOD).find((x) => x.props?.chat === this.chat && x.props?.subagent && panes().some((p) => p.pane === x.pane));
       } catch {}
       if (open) {
         run("tab.select", { id: open.tab });
@@ -2204,13 +2233,30 @@ export default class HerdrChat extends View {
     try {
       el = this.renderChat(cx);
     } catch (e) {
-      // A render that throws keeps the last frame: say why in the dump (and on screen).
-      this.renderError = `${message(e)} ${String(e?.stack ?? "").split("\n").slice(0, 4).join(" | ")}`;
-      this.debug.mark();
-      return div().p(16).text_color(theme().ansi1).child(`render failed: ${this.renderError}`);
+      // The runtime can release the nested code views under a live chat (seen after Continue as chat on
+      // another machine's TUI: "this Entity has been released"). Mounting one then throws on every frame,
+      // so drop them, draw this frame without them (the plain markdown and code cards), and let tick()
+      // make them again.
+      if (!/has been released/.test(message(e)) || !this.codeViews.size) return this.renderFailed(e);
+      this.log(`code views released under the chat (${this.codeViews.size}): drawn again without them`);
+      this.codeViews.clear();
+      this.codeSel.clear();
+      this.remakeCode = true;
+      try {
+        el = this.renderChat(cx);
+      } catch (e2) {
+        return this.renderFailed(e2);
+      }
     }
     this.renderError = null;
     return el;
+  }
+
+  // A render that throws keeps the last frame: say why in the dump (and on screen).
+  renderFailed(e) {
+    this.renderError = `${message(e)} ${String(e?.stack ?? "").split("\n").slice(0, 4).join(" | ")}`;
+    this.debug.mark();
+    return div().p(16).text_color(theme().ansi1).child(`render failed: ${this.renderError}`);
   }
 
   renderChat(cx) {

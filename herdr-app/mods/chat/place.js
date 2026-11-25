@@ -7,9 +7,9 @@
 
 import { getDoc } from "./hostpane.js";
 
-// The app's layout document, or null (no hc, no core).
-export async function readDoc() {
-  return (await getDoc()).value;
+// The app's layout document, or null (no hc, no core). `machine`: that machine's (its ids as the app's).
+export async function readDoc(machine = null) {
+  return (await getDoc(machine)).value;
 }
 
 // Every mod pane of `mod`: [{pane, tab, space, props}].

@@ -137,7 +137,8 @@ install changed, and removes the unpacked release.
   original changed shape is left out, with the reason.
 - Some screens exist only in the TUIs (Pi extension panels, Claude Code's
   and Codex's `/mcp` and `/permissions`): `/tui`.
-- Chats run on this computer only: New chat and Continue as chat refuse another machine's space or agent.
+- A chat with an agent on another machine runs its host there: that machine needs herdr-chat, named in
+  `data/herdr-chat/settings.json` under `machines` (README "Other machines"); without it, the chat says so.
 - macOS only.
 
 ## Done when

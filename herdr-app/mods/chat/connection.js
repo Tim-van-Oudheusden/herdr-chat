@@ -1,8 +1,9 @@
-import { appHome, hc, readTextFile, terminals } from "herdr";
+import { appHome, hc, home, readTextFile, terminals } from "herdr";
 import { openLink } from "./transport.js";
 import { DEFAULT_PROVIDER, MOD, message } from "./util.js";
+import { settingsPath, stateDir } from "./paths.js";
+import { machineAgent, machineSetup, qualify, readRemoteRegistry, tunnelPort } from "./remote.js";
 
-export const stateDir = () => `${appHome()}/data/herdr-chat`;
 export const registryPath = (chat) => `${stateDir()}/chats/${chat}.json`;
 
 async function readJson(path) {
@@ -12,9 +13,6 @@ async function readJson(path) {
     return {};
   }
 }
-
-/** Where the person's settings live (README "Configuration"); install never writes it. */
-export const settingsPath = () => `${stateDir()}/settings.json`;
 
 /**
  * What install wrote (mods/chat/config.json: the host, node, hc and each agent
@@ -60,8 +58,9 @@ export function runsHost(t) {
 // (host/claim.ts), and only that host writes the registry, so a terminal that
 // only carries the chat's label (a second host from before that, one that is
 // starting or refusing) is not it. new-chat/update.js pairs them the same way.
-export function registeredHost(entry) {
-  const a = entry?.terminal;
+// `machine`: a host on another machine writes its own bare terminal id there.
+export function registeredHost(entry, machine = null) {
+  const a = qualify(entry?.terminal, machine);
   return (a && terminals().find((t) => t.address === a && t.state === "live" && runsHost(t) && t.labels?.["herdr-chat.chat"] === entry.chat)) || null;
 }
 
@@ -87,8 +86,15 @@ const START_MAX = 60000;
 // dropped link leaves it unknown: the host may have acted on it.)
 export class NotTaken extends Error {}
 
+// A host call on another machine that never settles must not stop the connection loop: a view's module can
+// be reloaded under a call it made (the app logs "stranded script tasks"), which then never answers. After
+// `ms`, the attempt gives up on it, and the loop tries again.
+function within(promise, ms, cx, what) {
+  return Promise.race([promise, cx.sleep(ms).then(() => { throw new Error(`${what}: no answer in ${ms / 1000} s`); })]);
+}
+
 export class Connection {
-  // opts: {chat, cwd, attachOnly (never start a host), place: () => ({space, tab}) | null (a host starts only once the chat's tab is known), session, hostEnv, handOver ({pid, model, thinking} | null), onRecord(rec, cx), onChange(cx), log}
+  // opts: {chat, cwd, machine (the agent's `hc machine`, null: this computer), attachOnly (never start a host), place: () => ({space, tab}) | null (a host starts only once the chat's tab is known), session, hostEnv, handOver ({pid, model, thinking} | null), onRecord(rec, cx), onChange(cx), log}
   constructor(opts) {
     this.o = opts;
     this.status = "connecting"; // connecting | starting | connected | reconnecting | stopped | failed
@@ -117,7 +123,7 @@ export class Connection {
 
   /** The chat's host terminal (the registry's, as of the last connection attempt), while it runs; null otherwise. */
   hostTerminal() {
-    return registeredHost(this.entry);
+    return registeredHost(this.entry, this.o.machine);
   }
 
   /** Whether a host this connection started may still become the chat's (not in the registry or terminals() yet). */
@@ -165,16 +171,19 @@ export class Connection {
 
   // One connection attempt and, when it works, its whole read loop.
   async once(cx) {
-    const entry = await readRegistry(this.o.chat);
+    const machine = this.o.machine;
+    const entry = machine ? await within(readRemoteRegistry(machine, this.o.chat), 15000, cx, `the registry on ${machine}`) : await readRegistry(this.o.chat);
     this.entry = entry;
-    if (!entry?.port || !entry?.pid) {
+    if (!entry?.port || !entry?.pid || (machine && !entry.wsPort)) {
       await this.ensureHost(cx, entry);
       return;
     }
     let link;
     try {
-      link = await openLink(entry);
+      // A host on another machine: its WebSocket port through a tunnel from here (remote.js).
+      link = await openLink(machine ? { wsPort: await within(tunnelPort(machine, entry.wsPort, { cfg: await readConfig(), cx, log: (m) => this.o.log?.(m) }), 30000, cx, `the tunnel to ${machine}`) } : entry);
     } catch (e) {
+      if (machine) this.o.log?.(`link to ${machine}: ${message(e)}`);
       await this.ensureHost(cx, entry);
       return;
     }
@@ -251,12 +260,25 @@ export class Connection {
     }
     const started = (this.started = { address: null, at: Date.now() });
     this.set("starting", null, cx);
+    const machine = this.o.machine;
     const cfg = await readConfig();
+    // Another machine's: its own herdr-chat, state dir and agents (remote.js), none of this computer's.
+    let setup = null;
+    if (machine) {
+      try {
+        setup = await machineSetup(machine);
+      } catch (e) {
+        this.started = null;
+        this.startFailed = true;
+        this.set("failed", message(e), cx);
+        return;
+      }
+    }
     // The chat's agent: its props, else what the registry recorded (a reopened chat keeps it).
     const provider = this.o.provider ?? entry?.provider ?? DEFAULT_PROVIDER;
     this.provider = provider;
-    const host = cfg.host;
-    const agent = cfg.agent(provider);
+    const host = setup ? setup.host : cfg.host;
+    const agent = setup ? machineAgent(setup, provider) : cfg.agent(provider);
     if (!host) {
       this.started = null;
       this.startFailed = true;
@@ -264,7 +286,9 @@ export class Connection {
       return;
     }
     const env = { ...agent.env, ...(this.o.hostEnv ?? {}) };
-    if (cfg.node) env.HERDR_CHAT_NODE = cfg.node;
+    const node = setup ? setup.node : cfg.node;
+    if (node) env.HERDR_CHAT_NODE = node;
+    const cwd = this.o.cwd ?? setup?.home ?? home();
     const session = this.o.session ?? entry?.sessionFile ?? null;
     const args = [
       // No --name: the registry and the herdr-chat.chat label identify it, and
@@ -272,17 +296,17 @@ export class Connection {
       // labels yet: the app would adopt it as a visible pane. The chat adds
       // its pane, hidden, to the layout document, then labels it (main.js
       // keepHostHidden). --keep: the core keeps it, as adoption would.
-      "run", "--bg", "--json", "--keep", "--no-parent", "--cwd", this.o.cwd,
+      "run", ...(machine ? ["--on", machine] : []), "--bg", "--json", "--keep", "--no-parent", "--cwd", cwd,
       "--label", `herdr-chat.chat=${this.o.chat}`, "--label", "herdr-chat.role=host",
       "--", "/usr/bin/env", ...Object.entries(env).map(([k, v]) => `${k}=${v}`),
-      host, "serve", "--chat", this.o.chat, "--cwd", this.o.cwd, "--state-dir", stateDir(), "--app-home", appHome(), "--provider", provider,
+      host, "serve", "--chat", this.o.chat, "--cwd", cwd, "--state-dir", setup?.stateDir ?? stateDir(), "--app-home", setup?.appHome ?? appHome(), "--provider", provider,
       ...(session ? ["--session", session] : []),
       // A Pi TUI this chat takes over: the host waits for its pid, then uses its model and
       // thinking (only while that pid lives: a later restart of the chat ignores them).
       ...(session && this.o.handOver?.pid ? ["--after-pid", String(this.o.handOver.pid),
         ...(this.o.handOver.model ? ["--model", this.o.handOver.model] : []),
         ...(this.o.handOver.thinking ? ["--thinking", this.o.handOver.thinking] : [])] : []),
-      // The agent's command and arguments (readConfig).
+      // The agent's command and arguments (readConfig; on another machine, settings.json "machines").
       ...(agent.command ? [`--${provider}`, agent.command] : []),
       ...(agent.args.length ? ["--", ...agent.args] : []),
     ];
@@ -291,7 +315,7 @@ export class Connection {
     if (r.code !== 0) {
       if (this.started === started) this.started = null;
       this.startFailed = true;
-      this.set("failed", startError((r.stderr || r.stdout).trim(), this.o.cwd), cx);
+      this.set("failed", startError((r.stderr || r.stdout).trim(), cwd), cx);
       return;
     }
     try {

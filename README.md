@@ -139,10 +139,41 @@ runs). A new chat picks up a change. `updates.check: false` stops the daily
 look for a new release (a release install only); `updates.feed` points it at
 another URL with GitHub's release JSON.
 
+## Other machines
+
+An agent on another machine (`hc machine add`: a server, a VM) gets a chat
+too: New chat in that machine's space, Continue as chat on its TUI, Open as
+chat on its sub-agents. The chat's host runs on that machine, next to the
+agent and its sessions; the chat reaches it through a tunnel this computer
+starts on its own (`herdr-chat-host tunnel`, over the machine's ssh target or
+its `--via` command), so the machine needs no open port.
+
+That machine needs herdr-chat itself, with Node: a clone there (`npm ci`,
+Node 24) or an unpacked release (Node 20), named in this computer's
+settings.json under `machines`. Its agents are the ones on its `PATH`, or
+what `machines` names; nothing from this computer's install is sent there:
+
+```json
+{
+  "machines": {
+    "box": {
+      "host": "/home/me/src/herdr-chat/bin/herdr-chat-host",
+      "node": "/usr/bin/node",
+      "env": { "KEY": "value" },
+      "omp": { "command": "/home/me/.local/bin/omp", "args": [], "tui": ["omp"] }
+    }
+  }
+}
+```
+
+Pasting or dropping an image or file there says it can't: those are this
+computer's, and the agent can't read them. Opening a file a tool touched runs
+that machine's `$EDITOR` in a terminal there (herdr-nvim is this computer's).
+A chat's host there is that machine's install: the update question doesn't
+restart it.
+
 ## Limitations
 
-- **This computer only.** Chats run on this computer only: in another machine's space,
-  New chat and Continue as chat say so.
 - **The end-to-end tests drive macOS only** (`tests/e2e/`); on Linux the
   host's tests run, and the mods were tried by hand.
 - **Run the install again after a Herdr update.** The agents list and the
