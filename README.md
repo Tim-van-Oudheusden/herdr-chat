@@ -8,7 +8,7 @@
   <a href="#features">features</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#keys">keys</a> · <a href="#configuration">configuration</a> · <a href="#limitations">limitations</a> · <a href="CHANGELOG.md">changelog</a>
 </p>
 
-A native chat for **Pi, Claude Code and Codex** in the
+A native chat for **Pi, Claude Code, Codex and omp** in the
 [Herdr](https://herdr.dev) desktop app, in place of their terminal UIs. Each
 agent is the CLI you already use, with your login, settings, extensions,
 skills and sessions. The chat only draws it.
@@ -21,8 +21,8 @@ https://github.com/user-attachments/assets/cefe4c53-19f6-4c3b-8188-f8480f4c2816
 
 ## Features
 
-- **One chat for three agents** - the same timeline, keys and pickers for Pi,
-  Claude Code and Codex. Each control shows only where the agent supports it.
+- **One chat for four agents** - the same timeline, keys and pickers for Pi,
+  Claude Code, Codex and omp. Each control shows only where the agent supports it.
 - **Readable answers** - streaming markdown, highlighted code, Mermaid
   diagrams you can zoom, and tool cards with diffs and exit codes.
 - **Approvals** - allow once, always, or deny with a reason, by key.
@@ -40,7 +40,7 @@ https://github.com/user-attachments/assets/cefe4c53-19f6-4c3b-8188-f8480f4c2816
   `/tui` continues the session there.
 - **`/fork`** - a new session up to any earlier message, with that message
   back in the composer.
-- **Continue as chat** - right-click a running Pi, Claude Code or Codex
+- **Continue as chat** - right-click a running Pi, Claude Code, Codex or omp
   terminal → **Continue as chat**: the chat takes over its session.
 - **Sub-agent chats** - your agents start their helpers as chats. Click a
   helper's row in the agents list to read along or type to it.
@@ -52,8 +52,8 @@ https://github.com/user-attachments/assets/cefe4c53-19f6-4c3b-8188-f8480f4c2816
 - The **Herdr desktop app** (0.1.12 or later), and herdr-core (`hc`) on
   `PATH`.
 - **Node 20** or later.
-- At least one agent on `PATH`, signed in: `pi` (1.5 or later), `claude` or
-  `codex`.
+- At least one agent on `PATH`, signed in: `pi` (1.5 or later), `claude`,
+  `codex` or `omp` (19.1 or later).
 - macOS or Linux. On Linux, pasting an image needs `wl-paste`
   (wl-clipboard, Wayland) or `xclip` (X11), and large images are shrunk with
   ImageMagick when it's installed (else sent as they are).
@@ -84,7 +84,7 @@ window to "add the mod at github.com/ChmaraX/herdr-chat".
 
 ## Quick start
 
-1. **Open a chat.** ⌘I, then **P**i, **C**laude Code or Code**X**. It opens
+1. **Open a chat.** ⌘I, then **P**i, **C**laude Code, Code**X** or **o**mp. It opens
    in a new tab, in the focused terminal's folder.
 2. **Talk to it.** Enter sends. `@` finds files; paste or drop an image to
    attach it. While it works, Enter steers and ⌥Enter queues; Esc stops.

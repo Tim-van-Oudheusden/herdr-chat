@@ -1,8 +1,8 @@
 // The sub-agents note in each agent's own instruction file: Pi's AGENTS.md,
-// Claude Code's CLAUDE.md, Codex's AGENTS.md. It tells an agent that runs in
-// Herdr to start its Pi, Claude Code or Codex sub-agents with the hc
-// templates install.sh writes (pi-chat, claude-chat, codex-chat), so the
-// person can open them as chats.
+// Claude Code's CLAUDE.md, Codex's AGENTS.md, omp's AGENTS.md. It tells an
+// agent that runs in Herdr to start its Pi, Claude Code, Codex or omp
+// sub-agents with the hc templates install.sh writes (pi-chat, claude-chat,
+// codex-chat, omp-chat), so the person can open them as chats.
 //
 // The note is one block between marker lines. A file is written only for an
 // agent whose config folder exists (created when missing). Install again
@@ -13,7 +13,8 @@
 //
 //   node install/instructions.ts install|uninstall <app home>
 //   (Pi: $PI_CODING_AGENT_DIR else ~/.pi/agent; Claude Code: $CLAUDE_CONFIG_DIR
-//   else ~/.claude; Codex: $CODEX_HOME else ~/.codex)
+//   else ~/.claude; Codex: $CODEX_HOME else ~/.codex; omp: $PI_CODING_AGENT_DIR
+//   else ~/.omp/agent)
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -23,23 +24,28 @@ export const END = "<!-- herdr-chat:subagents end -->";
 export const BLOCK = [
   BEGIN,
   "## Sub-agents in Herdr",
-  'To start a Pi, Claude Code or Codex sub-agent, run `hc run --bg --name <name> pi-chat "<task>"` (or `claude-chat`, `codex-chat`), so the person can open it as a chat.',
-  "Use `hc run --bg --name <name> -- pi` (or `-- claude`, `-- codex`) only when you need its terminal UI.",
+  'To start a Pi, Claude Code, Codex or omp sub-agent, run `hc run --bg --name <name> pi-chat "<task>"` (or `claude-chat`, `codex-chat`, `omp-chat`), so the person can open it as a chat.',
+  "Use `hc run --bg --name <name> -- pi` (or `-- claude`, `-- codex`, `-- omp`) only when you need its terminal UI.",
   "Everything else is the same: `hc send`, `hc wait`, `hc read` and `hc kill` by name.",
   END,
 ].join("\n") + "\n";
 
-export type Agent = { id: "pi" | "claude" | "codex"; name: string; dir: string; file: string };
+export type Agent = { id: "pi" | "claude" | "codex" | "omp"; name: string; dir: string; file: string };
 
 export function agents(env: NodeJS.ProcessEnv, home = env.HOME || homedir()): Agent[] {
   const pi = env.PI_CODING_AGENT_DIR || join(home, ".pi", "agent");
   const claude = env.CLAUDE_CONFIG_DIR || join(home, ".claude");
   const codex = env.CODEX_HOME || join(home, ".codex");
-  return [
+  // omp honours Pi's variable too (its agent dir: $PI_CODING_AGENT_DIR, else ~/.omp/agent);
+  // set, the two share one file, which gets one note (Pi's entry).
+  const omp = env.PI_CODING_AGENT_DIR || join(home, ".omp", "agent");
+  const list: Agent[] = [
     { id: "pi", name: "Pi", dir: pi, file: join(pi, "AGENTS.md") },
     { id: "claude", name: "Claude Code", dir: claude, file: join(claude, "CLAUDE.md") },
     { id: "codex", name: "Codex", dir: codex, file: join(codex, "AGENTS.md") },
+    { id: "omp", name: "omp", dir: omp, file: join(omp, "AGENTS.md") },
   ];
+  return list.filter((a, i) => list.findIndex((b) => b.file === a.file) === i);
 }
 
 /** Where the block is: [start of the BEGIN line, end of the END line and its newline). */

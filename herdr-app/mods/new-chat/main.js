@@ -1,10 +1,10 @@
 // new-chat: the "New chat with…" launcher, and the commands that open chats.
 //
 // As an overlay (`mod.open:new-chat`, the "open" key: cmd-i): Pi, Claude
-// Code or Codex, then a new tab with the chat (mod chat, props {chat, cwd,
+// Code, Codex or omp, then a new tab with the chat (mod chat, props {chat, cwd,
 // provider}) for the focused terminal's folder (else the space's). Keys:
-// p / c / x pick (only an agent that is installed; the launcher has no text
-// field, so letters are always picks), 1/2/3 too, ↑↓ move, Enter opens the
+// p / c / x / o pick (only an agent that is installed; the launcher has no text
+// field, so letters are always picks), 1/2/3/4 too, ↑↓ move, Enter opens the
 // selected one (the last choice, kept in <appHome>/data/herdr-chat/launcher.json),
 // Esc closes. Its commands: `new-chat.pick:<provider>`, `new-chat.enter`.
 //
@@ -12,7 +12,7 @@
 // install/layout.ts): always on screen at no size, so it takes the commands a
 // key or another mod runs while no launcher is open:
 // - `new-chat.open`: the launcher (as mod.open:new-chat; again: closes it);
-// - `new-chat.pi`, `new-chat.claude`, `new-chat.codex`: that agent's chat, in a new tab
+// - `new-chat.pi`, `new-chat.claude`, `new-chat.codex`, `new-chat.omp`: that agent's chat, in a new tab
 //   (not in another machine's space or terminal: it says so);
 // - `new-chat.continue:<terminal>`: chat-menu's Continue as chat (an agent's
 //   TUI handed over to a chat on its session, see continueAsChat);
@@ -34,6 +34,7 @@ const CHOICES = [
   { id: "pi", label: "Pi", icon: "pi", tint: true, letter: "p" },
   { id: "claude", label: "Claude Code", icon: "claude", letter: "c" },
   { id: "codex", label: "Codex", icon: "codex", letter: "x" },
+  { id: "omp", label: "omp", icon: "omp", tint: true, letter: "o" },
 ];
 const PREFS = () => `${appHome()}/data/herdr-chat/launcher.json`;
 
@@ -70,7 +71,7 @@ const word = (s) => (typeof s === "string" ? s : s?.state ?? null);
 const NAMES = Object.fromEntries(CHOICES.map((c) => [c.id, c.label]));
 
 // Herdr's names for the agents (its status reports Claude Code as claude-code) → ours.
-const HERDR_AGENTS = { pi: "pi", claude: "claude", "claude-code": "claude", codex: "codex" };
+const HERDR_AGENTS = { pi: "pi", claude: "claude", "claude-code": "claude", codex: "codex", omp: "omp" };
 
 /** The agent a terminal runs, as Herdr reports it (an id of CHOICES), else null. */
 export function agentOf(t) {
@@ -80,7 +81,7 @@ export function agentOf(t) {
 
 /**
  * Why a terminal can't continue as a chat (null: it can): a live agent TUI
- * (Pi, Claude Code, Codex) of this computer's, idle or done. `why` says why
+ * (Pi, Claude Code, Codex, omp) of this computer's, idle or done. `why` says why
  * not; `note`, when set, is an agent's TUI that can't continue now (another
  * machine's, or while it works): chat-menu shows the item disabled with it,
  * and `why` is the sentence to show. Which session it has open is the host's

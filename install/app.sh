@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install herdr-chat (Pi, Claude Code and Codex as a native GUI chat) into the Herdr desktop app.
+# Install herdr-chat (Pi, Claude Code, Codex and omp as a native GUI chat) into the Herdr desktop app.
 # The root install.sh runs this: from a clone (./install.sh), or from a release it
 # downloaded and unpacked (the curl one-liner).
 #
@@ -16,9 +16,9 @@
 #                      instruction files (--no-templates: the same)
 #
 # Keys: the "global" part of data/herdr-chat/keys.json in the app home (KEYS.md):
-#   {"global": {"open": "cmd-i", "pi": null, "claude": null, "codex": null}}
+#   {"global": {"open": "cmd-i", "pi": null, "claude": null, "codex": null, "omp": null}}
 #   open: the "New chat with…" launcher (default cmd-i; cmd-j a when cmd-i is
-#   taken); pi/claude/codex: that agent's chat at once (unbound by default).
+#   taken); pi/claude/codex/omp: that agent's chat at once (unbound by default).
 #   A chord you choose replaces what had it; uninstall puts that back.
 #
 # What it does, in the app home ($HERDR_APP_HOME, else ~/.config/herdr-app):
@@ -44,11 +44,11 @@
 #     rewritten only if unchanged since it was read; recorded in
 #     data/herdr-chat/install.json so --uninstall restores exactly that
 # And in herdr-core's templates ($XDG_CONFIG_HOME, else ~/.config, /herdr-core/templates):
-#   - pi-chat.md, claude-chat.md, codex-chat.md (each agent found): `hc run … pi-chat "<task>"`
+#   - pi-chat.md, claude-chat.md, codex-chat.md, omp-chat.md (each agent found): `hc run … pi-chat "<task>"`
 #     starts a sub-agent the person can open as a chat (only over files it wrote)
 # And in each agent's instruction file, when that agent is installed (its folder exists):
 #   - a marked block telling it to start sub-agents that way (install/instructions.ts):
-#     Pi ~/.pi/agent/AGENTS.md, Claude Code ~/.claude/CLAUDE.md, Codex ~/.codex/AGENTS.md
+#     Pi ~/.pi/agent/AGENTS.md, Claude Code ~/.claude/CLAUDE.md, Codex ~/.codex/AGENTS.md, omp ~/.omp/agent/AGENTS.md
 # And in Pi's agent dir ($PI_CODING_AGENT_DIR, else ~/.pi/agent):
 #   - installs extensions/herdr-chat-lock.ts (keeps the TUI from writing a
 #     session a chat has open; labels a Pi TUI's terminal with its session,
@@ -75,7 +75,7 @@ die() { printf 'herdr-chat: %s\n' "$*" >&2; exit 1; }
 UNINSTALL=0 LAYOUT=1 SUBAGENTS=1 TAKE=()
 TPL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-core/templates"
 TPL_MARK="installed-by: herdr-chat"
-PROVIDERS="pi claude codex"
+PROVIDERS="pi claude codex omp"
 while [ $# -gt 0 ]; do
   case "$1" in
     --uninstall) UNINSTALL=1 ;;
@@ -131,7 +131,7 @@ for p in $PROVIDERS; do
   printf -v "BIN_$p" '%s' "$path"
   [ -z "$path" ] || AGENTS_FOUND+=("$p")
 done
-[ "${#AGENTS_FOUND[@]}" -gt 0 ] || die "no agent on PATH: install Pi (pi), Claude Code (claude) or Codex (codex) first"
+[ "${#AGENTS_FOUND[@]}" -gt 0 ] || die "no agent on PATH: install Pi (pi), Claude Code (claude), Codex (codex) or omp (omp) first"
 APP="${HERDR_APP_BIN:-$(command -v herdr-app || true)}"
 [ -n "$APP" ] || for c in /Applications/*.app/Contents/MacOS/Herdr; do [ -x "$c" ] && APP="$c" && break; done
 [ -n "$APP" ] || die "herdr-app not found (set HERDR_APP_BIN)"
@@ -175,10 +175,10 @@ BUILD=$("$NODE" "$ROOT/host/main.$EXT" build | "$NODE" -e 'process.stdout.write(
 # clone: anything else (./install.sh in a checkout, an unpacked release run in place).
 CHANNEL=$([ -n "${HERDR_CHAT_INSTALL_CMD:-}" ] && [ "$EXT" = js ] && echo release || echo clone)
 # installedAt: a chat whose host started before it, on another build, runs older code.
-"$NODE" -e 'const [path, host, node, hc, version, build, channel, update, pi, claude, codex] = process.argv.slice(1);
-const agents = Object.fromEntries(Object.entries({ pi, claude, codex }).filter(([, v]) => v));
+"$NODE" -e 'const [path, host, node, hc, version, build, channel, update, pi, claude, codex, omp] = process.argv.slice(1);
+const agents = Object.fromEntries(Object.entries({ pi, claude, codex, omp }).filter(([, v]) => v));
 require("fs").writeFileSync(path, JSON.stringify({ host, node, hc, version, build, installedAt: Date.now(), channel, update, ...agents }, null, 2) + "\n")' \
-  "$STAGE/chat/config.json" "$LINK/bin/herdr-chat-host" "$NODE" "$HC" "$VERSION" "$BUILD" "$CHANNEL" "$INSTALL_CMD" "$BIN_pi" "$BIN_claude" "$BIN_codex"
+  "$STAGE/chat/config.json" "$LINK/bin/herdr-chat-host" "$NODE" "$HC" "$VERSION" "$BUILD" "$CHANNEL" "$INSTALL_CMD" "$BIN_pi" "$BIN_claude" "$BIN_codex" "$BIN_omp"
 for m in "${MODS[@]}"; do
   "$APP" check "$STAGE/$m" >/dev/null 2>&1 || { "$APP" check "$STAGE/$m" || true; die "mods/$m failed herdr-app check; nothing installed"; }
 done
@@ -223,7 +223,7 @@ if [ "$SUBAGENTS" = 1 ]; then
     f="$TPL_DIR/$p-chat.md"
     if [ -f "$f" ] && ! grep -qx "$TPL_MARK" "$f"; then say "$f exists and isn't herdr-chat's; not touching it"; continue; fi
     wrote+=("$p-chat")
-    case "$p" in pi) name="Pi" ;; claude) name="Claude Code" ;; codex) name="Codex" ;; esac
+    case "$p" in pi) name="Pi" ;; claude) name="Claude Code" ;; codex) name="Codex" ;; omp) name="omp" ;; esac
     cat >"$f" <<TPL
 ---
 description: $name as a sub-agent the person can open as a chat in Herdr (its row in the agents list). Give it the task in hc run.

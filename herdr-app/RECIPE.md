@@ -1,6 +1,6 @@
 # herdr-chat
 
-A native chat for Pi, Claude Code and Codex in a Herdr tab, in place of
+A native chat for Pi, Claude Code, Codex and omp in a Herdr tab, in place of
 their terminal UIs. It streams markdown, highlighted code and Mermaid
 diagrams, and shows tool cards with diffs, approval cards, and pickers for
 the model, effort and permission mode. Messages sent while the agent works
@@ -29,7 +29,7 @@ Tell the person first what it does:
   checks it against the release's `SHA256SUMS`, and unpacks it to
   `~/.local/share/herdr-chat/<version>`, with a `current` link to it;
 - needs macOS, Herdr 0.1.12 or later with `hc` on `PATH`, Node 20 or
-  later, and at least one agent on `PATH`: `pi`, `claude` or `codex`. A
+  later, and at least one agent on `PATH`: `pi`, `claude`, `codex` or `omp`. A
   Herdr newer than the tested 0.1.14 gets a warning; an older one than
   0.1.12 is refused;
 - adds the mods `chat`, `new-chat`, `chat-agents` and `chat-menu`;
@@ -39,9 +39,10 @@ Tell the person first what it does:
   says what that costs;
 - binds ⌘I to the launcher (⌘J A when ⌘I is taken). It never replaces a key
   of the person's unless they asked for that key;
-- writes the `hc` templates `pi-chat`, `claude-chat` and `codex-chat`, and a
-  short marked note in each installed agent's instruction file
-  (`~/.pi/agent/AGENTS.md`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`)
+- writes the `hc` templates `pi-chat`, `claude-chat`, `codex-chat` and
+  `omp-chat`, and a short marked note in each installed agent's instruction
+  file (`~/.pi/agent/AGENTS.md`, `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+  `~/.omp/agent/AGENTS.md`)
   asking it to start sub-agents as chats (`--no-subagents` skips both);
 - installs a Pi extension, `~/.pi/agent/extensions/herdr-chat-lock.ts`. It
   keeps a Pi TUI from writing a session a chat has open.
@@ -88,11 +89,11 @@ install changed, and removes the unpacked release.
   (which lists skills anywhere in the text), or typed out with a space.
   Sent, the pill becomes the message's leading `/command`; in the timeline
   it heads the bubble and opens to what the agent got.
-- **Continue as chat**: on an idle Pi, Claude Code or Codex TUI (right-click,
+- **Continue as chat**: on an idle Pi, Claude Code, Codex or omp TUI (right-click,
   or its row's menu), the agent quits cleanly and a chat opens on the same
   session (with its model and thinking level, where the agent records them).
 - **Sub-agents**: `hc run --bg --name <n> pi-chat "<task>"` (or
-  `claude-chat`, `codex-chat`) starts a helper. Its row under the parent
+  `claude-chat`, `codex-chat`, `omp-chat`) starts a helper. Its row under the parent
   opens its chat; closing the dialog or tab leaves it running, and only its
   parent ends it. `hc wait`, `hc send`, `hc read` and `hc kill` work as with
   a TUI.
@@ -106,8 +107,8 @@ install changed, and removes the unpacked release.
 ## Built from
 
 - **The host**, `herdr-chat-host` (`host/`, TypeScript; built to one JS file
-  for a release): it runs `pi --mode rpc`, `claude -p` (stream-json) or
-  `codex app-server`, turns their output into one timeline, the same for
+  for a release): it runs `pi --mode rpc`, `claude -p` (stream-json),
+  `codex app-server` or `omp --mode rpc`, turns their output into one timeline, the same for
   every agent, and serves it to the mod on TCP 127.0.0.1 with a token
   (JSONL; `docs/dev/protocol.md`). It runs in a hidden pane of the chat's
   tab, so Herdr lists it as the tab's agent.
@@ -144,7 +145,7 @@ install changed, and removes the unpacked release.
 
 - `herdr-app check` passes for each installed mod, and `herdr-app status`
   shows no errors.
-- ⌘I opens the launcher, and P, C and X open a chat with that agent in a
+- ⌘I opens the launcher, and P, C, X and O open a chat with that agent in a
   new tab.
 - A prompt streams an answer; a tool call shows its card and an approval
   card answers with 1, 2 or 3; Enter while it works steers, ⌥Enter queues a

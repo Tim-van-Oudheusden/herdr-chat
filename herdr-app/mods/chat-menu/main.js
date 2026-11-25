@@ -2,8 +2,8 @@
 // copied at install time) with two items on top for a terminal that is a
 // sub-agent's chat host (labeled herdr-chat.chat by bin/herdr-chat-subagent): Open
 // as chat (the chat dialog, in place of the Rust peek that shows its
-// transcript) and Open as a chat tab. For an agent's TUI (Pi, Claude Code or
-// Codex, idle or done), a sub-agent or a top-level TUI in its own pane:
+// transcript) and Open as a chat tab. For an agent's TUI (Pi, Claude Code,
+// Codex or omp, idle or done), a sub-agent or a top-level TUI in its own pane:
 // Continue as chat, which hands it over to a chat on its session (new-chat's
 // continueAsChat, run by the layout's always-shown new-chat copy, since this
 // menu closes first); disabled, with "Wait for the run to end", while it works,
@@ -26,7 +26,7 @@ function chatOf(p) {
 
 const word = (s) => (typeof s === "string" ? s : s?.state ?? null);
 // Herdr's names for the agents (its status reports Claude Code as claude-code) → ours. A copy of new-chat's.
-const HERDR_AGENTS = { pi: "pi", claude: "claude", "claude-code": "claude", codex: "codex" };
+const HERDR_AGENTS = { pi: "pi", claude: "claude", "claude-code": "claude", codex: "codex", omp: "omp" };
 const agentOf = (t) => [t?.program?.key, t?.app, t?.status?.app, t?.report?.app, t?.agent].map((a) => HERDR_AGENTS[a]).find(Boolean) ?? null;
 
 /** Why a terminal can't continue as a chat (null: it can; `note`: shown disabled with it). A copy of new-chat's. */

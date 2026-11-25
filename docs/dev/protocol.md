@@ -388,8 +388,8 @@ working unchanged.
 ### ChatState additions
 
 ```ts
-provider: "pi" | "claude" | "codex";
-providerName: string;                 // "Pi", "Claude Code", "Codex"
+provider: "pi" | "claude" | "codex" | "omp";
+providerName: string;                 // "Pi", "Claude Code", "Codex", "omp"
 capabilities: {
   steer: boolean;                     // a message mid-run is folded into the current run
   followUp: boolean;                  // a message mid-run can wait for the run to end
@@ -410,7 +410,8 @@ permissionMode: string | null;        // current id from capabilities.permission
 built-ins with the agent's commands:
 - Pi: `get_commands`;
 - Claude: `initialize.commands`, minus the terminal-only ones;
-- Codex: skills plus `~/.codex/prompts`.
+- Codex: skills plus `~/.codex/prompts`;
+- omp: `get_available_commands` (its builtins, extension, custom and file commands, skills).
 
 ### Dialog additions
 
@@ -459,7 +460,7 @@ ToolDetail +=
 - Chat props become `{chat, cwd, provider}`, default `pi`. The host is started as `serve --provider <p>`.
 - The registry records `provider`.
 - OSC 7501 reports `app=<provider>`.
-- The TUI hand-off argv comes from the adapter: `pi --session <f>`, `claude --resume <id>`, `codex resume <threadId>`.
+- The TUI hand-off argv comes from the adapter: `pi --session <f>`, `claude --resume <id>`, `codex resume <threadId>`, `omp --resume <f>`.
 
 
 ### Built-in commands per provider (v3)
@@ -472,13 +473,14 @@ ToolDetail +=
   - `fork` needs `fork` (the adapter has `forkPoints` and `fork`);
   - `tui` needs `tui`.
 - **Terminal utilities** (`login`, `settings`, `scoped-models`) are offered only when the adapter has an argv for them. The menu entry carries it as `Command.argv`, and the client runs that argv in a terminal in the chat's cwd (no pane: a dialog over the chat shows it), then sends `resume`.
-- **What to type** (`Command.input`): for a utility or a TUI command, the client types it into the terminal once the agent is idle (`hc wait`, then `hc send --if idle`), so the person lands on that screen. A TUI command's is `/<name>`; a utility's is the adapter's `tuiInput(name)` (Pi: `/login`, `/settings`, `/scoped-models`; Claude Code: `/config` for `settings`).
+- **What to type** (`Command.input`): for a utility or a TUI command, the client types it into the terminal once the agent is idle (`hc wait`, then `hc send --if idle`), so the person lands on that screen. A TUI command's is `/<name>`; a utility's is the adapter's `tuiInput(name)` (Pi: `/login`, `/settings`, `/scoped-models`; Claude Code: `/config` for `settings`; omp: `/login`, `/settings`).
 
   | provider | login | settings |
   |---|---|---|
   | Pi | `pi --no-session` | `pi --no-session` |
   | Claude | `claude auth login` | `claude` |
   | Codex | `codex login` | not offered |
+  | omp | `omp --no-session` | `omp --no-session` |
 
   Pi also offers `scoped-models` (`pi --no-session`).
 - **TUI commands**: the agent's commands that work only in its own TUI, from the adapter's `tuiCommands()` (Pi: its built-ins RPC doesn't run, such as `tree`, `export`, `share`, `session`; Claude Code: its terminal-only commands such as `doctor`, `theme`, `statusline`; Codex: its TUI's, such as `init`, `status`, `review`, `diff`, `mcp`; each minus those the chat has its own way for). Offered when `tui`; each is a `/tui`-style hand-off that types `/<name>`.
@@ -520,7 +522,7 @@ queue: { steering: string[]; followUp: string[];
 ## Hand-off watch (host)
 
 - `terminal` reported: `hc` says `finished` or `not_found` → wait until the TUI pid (from the hand-off file) and any process on the session are gone → resume by itself. `hc` errors 5x in a row → falls back to the process watch below.
-- No terminal within 60 s: resume when no live process is on the session: the hand-off file's pid, the agent's guard (Claude registry), else a `ps` scan for a pi/claude/codex process whose argv has the session (the argv's last arg).
+- No terminal within 60 s: resume when no live process is on the session: the hand-off file's pid, the agent's guard (Claude registry, omp's session lease), else a `ps` scan for a pi/claude/codex/omp process whose argv has the session (the argv's last arg).
 - Independent of clients: works with no mod connected.
 - Refused ops in `handoff`: "Pi is open in the terminal UI (terminal t7). Quit it there, or use resume (Return to chat) to come back."
 - Refused ops in `conflict`: "This session is open in another chat (terminal t7). Go to that chat, or use take_over to move it here." / "This session is open in Claude Code outside a chat (pid N). Quit it there, then use resume."
@@ -608,9 +610,9 @@ finds and treats it ([research/subagent-chat.md](research/subagent-chat.md)).
 
 ### The host as a sub-agent: `herdr-chat-host run`
 
-`bin/herdr-chat-subagent [--provider pi|claude|codex] [--session <f>] [--cwd <d>] [-- <agent args>]`
+`bin/herdr-chat-subagent [--provider pi|claude|codex|omp] [--session <f>] [--cwd <d>] [-- <agent args>]`
 (= `herdr-chat-host run …`) is what a parent agent's `hc run` starts, directly or
-through the hc templates `pi-chat`, `claude-chat`, `codex-chat`. It `serve`s with:
+through the hc templates `pi-chat`, `claude-chat`, `codex-chat`, `omp-chat`. It `serve`s with:
 
 - `--chat c-<8 hex>`: a fresh id each time (`--chat` is refused: a known id resumes that chat's session);
 - `--state-dir ${HERDR_APP_HOME:-~/.config/herdr-app}/data/herdr-chat`, where the mod reads the registry;
@@ -625,7 +627,7 @@ Before it serves, it labels its own terminal (`hc label $HC_TERMINAL_ID …`):
 |---|---|---|
 | `herdr-chat.chat` | the chat id | the mod (`registeredHost` checks it on the registry's terminal; the orphan sweep), chat-agents, chat-menu |
 | `herdr-chat.role` | `subagent` (a chat's own host: `host`) | `sweepOrphans` ends only `role=host` terminals |
-| `herdr-chat.provider` | `pi` / `claude` / `codex` | the dialog's `provider` prop |
+| `herdr-chat.provider` | `pi` / `claude` / `codex` / `omp` | the dialog's `provider` prop |
 
 A failed label is a `! hc label …` line on the transcript; the host serves its parent anyway.
 The transcript's second line is a hint: `sub-agent chat · in Herdr: right-click → Open as chat`.

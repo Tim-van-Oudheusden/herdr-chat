@@ -1,0 +1,28 @@
+{
+ "description": "E2E (mod): omp's approval select as a permission card, a hashline edit's card and diff, then /fork and /tui.",
+ "thinkingLevel": "low",
+ "prompts": [
+  {
+   "match": "run the tests",
+   "steps": [
+    { "text": "Running the tests." },
+    { "tool": { "name": "bash", "args": { "command": "npm test" }, "output": "✓ parses numbers\n✓ trims input\n2 passing\n", "approval": true } },
+    { "text": "All tests pass." }
+   ]
+  },
+  {
+   "match": "edit the file",
+   "steps": [
+    {
+     "tool": {
+      "name": "edit",
+      "args": { "input": "[src/a.ts#1A2B]\nPUT 1.=1:\n+export const a = 2;" },
+      "output": "[src/a.ts#3C4D]\n1:export const a = 2;",
+      "details": { "diff": "-1|export const a = 1;\n+1|export const a = 2;", "path": "src/a.ts", "op": "update", "firstChangedLine": 1 }
+     }
+    },
+    { "text": "Edited src/a.ts." }
+   ]
+  }
+ ]
+}

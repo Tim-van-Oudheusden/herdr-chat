@@ -1,6 +1,6 @@
 # Multiple agents, one chat UI
 
-Goal: the same chat UI (mod `chat`) for **Pi, Claude Code and Codex**, then
+Goal: the same chat UI (mod `chat`) for **Pi, Claude Code, Codex and omp**, then
 others. The rule: nothing provider-specific is hard-coded outside an adapter
 (`host/providers/<agent>/`); the core and the mod read capabilities and the
 adapter's answers. The ids and names are listed once on each side:
@@ -18,7 +18,8 @@ host core (provider-neutral)
    │  ProviderAdapter interface (host/providers/types.ts)
    ├── host/providers/pi/       pi --mode rpc           (today's pi-rpc.ts + the Pi half of chat.ts/timeline.ts)
    ├── host/providers/claude/   Claude Code, structured mode (see research)
-   └── host/providers/codex/    Codex app-server JSON-RPC (see research)
+   ├── host/providers/codex/    Codex app-server JSON-RPC (see research)
+   └── host/providers/omp/      omp --mode rpc: Pi's RPC, omp's dialect (research/provider-omp.md)
 ```
 
 An **adapter** owns:
@@ -41,7 +42,7 @@ These are refined after the Claude and Codex research.
 - **tool:**
   - `tool_started {callId, name, args}`, `tool_progress {callId, partialOutput}`;
   - `tool_ended {callId, ok, output, images?, exitCode?, diff?}`;
-  - `name` is mapped to a ToolDetail by a **shared** classifier (host/tools.ts). Each adapter brings its `tools` (a ToolMap, `host/providers/<agent>/tools.ts`): its names for the shared kinds (Pi `bash`/`read`/`edit`/…, Claude `Bash`/`Read`/`Edit`/`MultiEdit`/`Write`/`Grep`/`Glob`/`WebFetch`/`Task`, Codex `commandExecution`/`fileChange`/`mcpToolCall`/`webSearch`), and hooks for what only it sends (Codex's shell wrapper and parsed command actions, Claude's patch in its edit results). The shared code never names an agent.
+  - `name` is mapped to a ToolDetail by a **shared** classifier (host/tools.ts). Each adapter brings its `tools` (a ToolMap, `host/providers/<agent>/tools.ts`): its names for the shared kinds (Pi `bash`/`read`/`edit`/…, Claude `Bash`/`Read`/`Edit`/`MultiEdit`/`Write`/`Grep`/`Glob`/`WebFetch`/`Task`, Codex `commandExecution`/`fileChange`/`mcpToolCall`/`webSearch`, omp `bash`/`eval`/`read`/`edit`/`ast_edit`/`write`/`grep`/`ast_grep`/`glob`/`find`), and hooks for what only it sends (Codex's shell wrapper and parsed command actions, Claude's patch in its edit results, omp's hashline edits and their numbered diff). The shared code never names an agent.
 - **ask** (one shape for extension dialogs, permission prompts and questions): `ask {id, kind: "select"|"confirm"|"input"|"editor"|"permission", title, message?, options?, tool?: {name, args}, timeoutAt?}`, answered by the `dialog_answer` op. Permission asks render as an approval card: "Allow once / Always / Deny".
 - **decoration:** `status {key, text}`, `widget {key, placement, lines}`, `title {text}`, `notice {level, text}` (from the agent: extensions, hooks, system messages)
 - **session:** `session {id, file?, name?}`, `model {provider, id, name, reasoning, contextWindow}`, `thinking {level}`, `usage {contextTokens, contextWindow, cost}`, `compaction {phase, …}`, `retry {…}`
@@ -50,38 +51,38 @@ These are refined after the Claude and Codex research.
 ### Commands (core → adapter)
 
 - `prompt {text, images, mode: auto|steer|followUp}`, `abort`, `answer {askId, value}`. The core holds follow-ups itself while a run is on (protocol v3.2), so an adapter sees `followUp` only in its own edge cases
-- optional `canRemoveQueued(id)` / `removeQueued(id)`: take back a queued message the agent hasn't taken yet (Pi: clear and re-add; Claude Code: `cancel_async_message`; Codex: none)
+- optional `canRemoveQueued(id)` / `removeQueued(id)`: take back a queued message the agent hasn't taken yet (Pi: clear and re-add; Claude Code: `cancel_async_message`; Codex: none; omp: `remove_queued_message`)
 - `listModels`, `setModel`, `setThinking`, `compact`, `newSession`, `switchSession`, `setName`
-- `sessions: SessionSource`: where /resume's sessions come from. `{kind: "files", files(current, scope), describe(path)}` (Pi, Claude Code: the core reads and caches them, `host/sessions.ts`) or `{kind: "agent", list(scope)}` (Codex: `thread/list`, a page at a time). The core lists, searches (name, first message, folder) and marks each `here` the same way for every agent
+- `sessions: SessionSource`: where /resume's sessions come from. `{kind: "files", files(current, scope), describe(path)}` (Pi, Claude Code, omp: the core reads and caches them, `host/sessions.ts`) or `{kind: "agent", list(scope)}` (Codex: `thread/list`, a page at a time). The core lists, searches (name, first message, folder) and marks each `here` the same way for every agent
 - `history()`: the normalized events to rebuild a resumed session
-- `tuiCommand(session)`: the argv of the agent's own TUI on this session, for hand-offs. Examples: `pi --session <f>`, `claude --resume <id>`, `codex resume <id>`.
-- optional `forkPoints()` and `fork(point)`: the person's messages, and a new session holding what came before one of them (resolves with the message's text). Pi: `get_fork_messages` / `fork`. Claude Code: its transcript's prompts, then a restart with `--resume <id> --fork-session --resume-session-at <the answer before>` (the fork's transcript is written at its first prompt; until then the history is the original's up to that answer). Codex: the turns' first `userMessage`, then `thread/fork {lastTurnId: the turn before}` on the same model and effort.
-- optional `tuiInput(name)`: what the chat types into the agent's terminal for a built-in that opens one, so it lands on that screen (Pi `/login`, Claude Code `/config`).
+- `tuiCommand(session)`: the argv of the agent's own TUI on this session, for hand-offs. Examples: `pi --session <f>`, `claude --resume <id>`, `codex resume <id>`, `omp --resume <f>`.
+- optional `forkPoints()` and `fork(point)`: the person's messages, and a new session holding what came before one of them (resolves with the message's text). Pi: `get_fork_messages` / `fork`. Claude Code: its transcript's prompts, then a restart with `--resume <id> --fork-session --resume-session-at <the answer before>` (the fork's transcript is written at its first prompt; until then the history is the original's up to that answer). Codex: the turns' first `userMessage`, then `thread/fork {lastTurnId: the turn before}` on the same model and effort. omp: the active branch of `get_entries`, then `fork {entryId: the message before}` (omp keeps the entry it is given), or `new_session` before the first.
+- optional `tuiInput(name)`: what the chat types into the agent's terminal for a built-in that opens one, so it lands on that screen (Pi and omp `/login`, Claude Code `/config`).
 
 ### Capabilities (in `ChatState.capabilities`, the mod adapts)
 
-| capability | Pi | Claude Code | Codex |
-|---|---|---|---|
-| `steer`, `followUp` | yes | yes | yes |
-| `thinkingLevels` | off…xhigh | the model's efforts | the model's efforts |
-| `permissions` + `permissionModes` | no (Pi has no approvals) | yes: Ask, Accept edits, Plan, Auto | yes: Ask first, Read only, Auto, Auto-review, Full access, Plan |
-| `extensionUi` (statuses, widgets) | yes | no | no |
-| `compact` / `compactInstructions` | yes / yes | yes / yes | yes / no |
-| `rename`, `fork` | yes | yes | yes |
-| `images` | per model | yes | per model |
-| `cost` | yes | yes | no (tokens only) |
-| `tui` | yes | yes | yes |
+| capability | Pi | Claude Code | Codex | omp |
+|---|---|---|---|---|
+| `steer`, `followUp` | yes | yes | yes | yes |
+| `thinkingLevels` | off…xhigh | the model's efforts | the model's efforts | the model's (`get_available_thinking_levels`), plus `auto` |
+| `permissions` + `permissionModes` | no (Pi has no approvals) | yes: Ask, Accept edits, Plan, Auto | yes: Ask first, Read only, Auto, Auto-review, Full access, Plan | yes (its approval selects); no modes (`--approval-mode` is a start flag) |
+| `extensionUi` (statuses, widgets) | yes | no | no | yes |
+| `compact` / `compactInstructions` | yes / yes | yes / yes | yes / no | yes / yes |
+| `rename`, `fork` | yes | yes | yes | yes |
+| `images` | per model | yes | per model | per model |
+| `cost` | yes | yes | no (tokens only) | yes |
+| `tui` | yes | yes | yes | yes |
 
 What else differs, from each agent's own mechanism, not from the chat:
 
-| | Pi | Claude Code | Codex |
-|---|---|---|---|
-| Terminal utilities (`utilityCommand`) | login, settings, scoped-models | login, settings (`/config`) | login |
-| TUI commands (`tuiCommands`) | its built-ins RPC doesn't run (tree, export, share, session…) | its terminal-only commands (doctor, theme…) | its TUI's (init, status, review, diff, mcp…) |
-| Another process on the session | the lock extension | its `~/.claude/sessions` registry (`sessionHolder`) | its "active writer" error |
-| The chat follows a session switch made in `/tui` | yes (the lock extension's hand-off file) | no | no |
-| Continue as chat: the TUI's session (`tui.ts`) | the lock extension's label | its `~/.claude/sessions/<pid>.json` | the rollout it has open, else the newest in its folder |
-| The plan (`state.plan`; a subagent's is a `plan` card) | none | TodoWrite: the chat's plan from the call, a subagent's as its card. TaskCreate/TaskUpdate/TaskList: the chat's plan, subagents' changes included, from the results (`plans.ts`), in task id order; a resume carries the transcript's list on, a fork starts a new one | `turn/plan/updated`, each turn's update replaces the plan; a subagent thread's is its card. Resume reads the rollout's `update_plan` calls (`rollout.ts`; code mode's `exec` JS too), and a fork's source's up to the fork |
+| | Pi | Claude Code | Codex | omp |
+|---|---|---|---|---|
+| Terminal utilities (`utilityCommand`) | login, settings, scoped-models | login, settings (`/config`) | login | login, settings |
+| TUI commands (`tuiCommands`) | its built-ins RPC doesn't run (tree, export, share, session…) | its terminal-only commands (doctor, theme…) | its TUI's (init, status, review, diff, mcp…) | none: its builtins run over RPC (`command_output`) |
+| Another process on the session | the lock extension | its `~/.claude/sessions` registry (`sessionHolder`) | its "active writer" error | its session lease (`omp session lease`; the holder: who has its lock file open) |
+| The chat follows a session switch made in `/tui` | yes (the lock extension's hand-off file) | no | no | no |
+| Continue as chat: the TUI's session (`tui.ts`) | the lock extension's label | its `~/.claude/sessions/<pid>.json` | the rollout it has open, else the newest in its folder | its terminal breadcrumb (`terminal-sessions/<tty>`) |
+| The plan (`state.plan`; a subagent's is a `plan` card) | none | TodoWrite: the chat's plan from the call, a subagent's as its card. TaskCreate/TaskUpdate/TaskList: the chat's plan, subagents' changes included, from the results (`plans.ts`), in task id order; a resume carries the transcript's list on, a fork starts a new one | `turn/plan/updated`, each turn's update replaces the plan; a subagent thread's is its card. Resume reads the rollout's `update_plan` calls (`rollout.ts`; code mode's `exec` JS too), and a fork's source's up to the fork | none yet (its `todo` is a tool card) |
 
 ## Process (one host process per chat)
 
@@ -97,9 +98,9 @@ What else differs, from each agent's own mechanism, not from the chat:
   restarts and the update question all act on that one. Its orphan sweep ends
   a chat's other host terminals (a second host from before the claim).
 - **Launcher:** ⌘I opens `new-chat`, which offers each agent install found.
-- The provider is a chat prop: `{chat, cwd, provider}`. The host gets it as `serve --provider pi|claude|codex`.
+- The provider is a chat prop: `{chat, cwd, provider}`. The host gets it as `serve --provider pi|claude|codex|omp`.
 - The registry records it, so reopening uses the same provider.
-- The Herdr agent status (OSC 7501) reports `app=pi|claude|codex`, so Herdr shows the right icon.
+- The Herdr agent status (OSC 7501) reports `app=pi|claude|codex|omp`, so Herdr shows the right icon.
 
 ## Adding an agent
 

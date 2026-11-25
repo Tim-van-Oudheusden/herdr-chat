@@ -13,7 +13,8 @@ Herdr tab
                │  one adapter per agent (providers.md)
                ├─ pi --mode rpc
                ├─ claude -p  (stream-json + control protocol)
-               └─ codex app-server  (JSON-RPC)
+               ├─ codex app-server  (JSON-RPC)
+               └─ omp --mode rpc  (Pi's RPC, omp's dialect; protocol v2 chunked frames)
 ```
 
 ## The host (`host/`, `bin/herdr-chat-host`)
@@ -21,7 +22,7 @@ Herdr tab
 - Runs in a herdr-core terminal, so it keeps running when the window closes,
   and Herdr lists it as an agent: status, notifications, `hc send`, `hc read`.
 - A provider-neutral core (`chat.ts`, `timeline.ts`, `commands.ts`) sits on
-  one adapter per agent (`host/providers/pi|claude|codex/`). An adapter turns
+  one adapter per agent (`host/providers/pi|claude|codex|omp/`). An adapter turns
   its agent's protocol into normalized events; the core turns those into the
   same timeline for every agent. The seam is
   [`host/providers/types.ts`](../../host/providers/types.ts); the design is
@@ -112,6 +113,10 @@ finds the session its own way (`host/providers/<agent>/tui.ts`):
   the newest rollout in its folder written since it started (a TUI on the
   shared daemon leaves the file to the daemon); the model and effort are the
   last `turn_context`'s.
+- **omp:** the breadcrumb omp keeps per terminal,
+  `~/.omp/agent/terminal-sessions/<tty>` (the TUI's TTY, `pts-3`): its second
+  line is the session file; the model and thinking level are the file's last
+  `model_change` and `thinking_level_change` entries.
 
 Then:
 

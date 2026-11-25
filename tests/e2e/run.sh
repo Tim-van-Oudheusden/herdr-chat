@@ -43,13 +43,14 @@ if [ -n "${LIVE:-}" ]; then
   CONFIG='{"pi": {'"$TUI"', "args": ["--model", "anthropic/claude-haiku-4-5", "--session-dir", "'"$BASE"'/pi-sessions"]},
     "claude": {"args": ["--model", "haiku"]}}'
 else
-  # Every provider runs on the real host, with a fake agent: fake-pi, fake-claude, fake-codex.
-  # Each TUI hand-off runs the fake TUI with the adapter's arguments (`--session <f>`, `--resume <id>`, `resume --no-daemon <id>`).
+  # Every provider runs on the real host, with a fake agent: fake-pi, fake-claude, fake-codex, fake-omp.
+  # Each TUI hand-off runs the fake TUI with the adapter's arguments (`--session <f>`, `--resume <id>`, `resume --no-daemon <id>`, `--resume <f>`).
   TUI='"tui": ["'"$BASE"'/fake-tui.sh"]'
   CONFIG='{"pi": {"command": "'"$FAKE"'/fake-pi.mjs", '"$TUI"'}, "claude": {"command": "'"$REPO"'/tests/fake-claude/fake-claude.mjs", '"$TUI"'},
-    "codex": {"command": "'"$REPO"'/tests/fake-codex/fake-codex.mjs", '"$TUI"'},
+    "codex": {"command": "'"$REPO"'/tests/fake-codex/fake-codex.mjs", '"$TUI"'}, "omp": {"command": "'"$REPO"'/tests/fake-omp/fake-omp.mjs", '"$TUI"'},
     "env": {"CLAUDE_CONFIG_DIR": "'"$BASE"'/claude-config", "FAKE_CLAUDE_LOG": "'"$BASE"'/fake-claude.log", "FAKE_CLAUDE_SPEED": "2", "HERDR_CHAT_CLAUDE_POLL_MS": "150",
-            "FAKE_CODEX_HOME": "'"$BASE"'/codex-home", "FAKE_CODEX_LOG": "'"$BASE"'/fake-codex.log", "FAKE_CODEX_SPEED": "2", "FAKE_PI_SPEED": "2", "FAKE_PI_SCENARIO": "'"$SCEN"'/tools.json", "FAKE_PI_LOG": "'"$BASE"'/fake-pi.log"}}'
+            "FAKE_CODEX_HOME": "'"$BASE"'/codex-home", "FAKE_CODEX_LOG": "'"$BASE"'/fake-codex.log", "FAKE_CODEX_SPEED": "2", "FAKE_PI_SPEED": "2", "FAKE_PI_SCENARIO": "'"$SCEN"'/tools.json", "FAKE_PI_LOG": "'"$BASE"'/fake-pi.log",
+            "FAKE_OMP_LOG": "'"$BASE"'/fake-omp.log", "FAKE_OMP_SPEED": "2"}}'
 fi
 install_mods "$CONFIG"
 cp "$HERDR_APP_HOME/mods/chat/config.json" "$ART/config.json"; cp "$STATE/settings.json" "$ART/settings.json"

@@ -1,6 +1,6 @@
 # Providers (docs/dev/providers.md, protocol v3), sourced by run.sh: flows
-# `claude` and `codex` (and `v3` = both, plus the launcher). Each runs the
-# real host with its fake agent (tests/fake-claude, tests/fake-codex) on a
+# `claude`, `codex` and `omp` (and `v3` = all three, plus the launcher). Each runs the
+# real host with its fake agent (tests/fake-claude, tests/fake-codex, tests/fake-omp) on a
 # scenario in tests/e2e/<provider>/e2e.json, and checks what the mod shows
 # (debug dump) and what reached the agent (the fake's log of what the host
 # sent). Every key step has a fallback (a dropped key while the window
@@ -540,6 +540,53 @@ PY
 
   step "codex: a finished plan, then the next message"
   plan_done strip-codex-done
+fi
+
+# --- omp (real host, fake-omp) -------------------------------------------------------------
+if want v3 || want omp; then
+  step "omp: identity, effort levels from omp (with auto), no permission modes"
+  CHAT=$(open_chat_p omp omp e2e)
+  ready
+  [ "$(d '[d["provider"], d["providerName"]]')" = '["omp", "omp"]' ] && ok "provider omp" || fail "provider $(d '[d["provider"], d["providerName"]]')"
+  expect '[ "$(d "d[\"capabilities\"][\"thinkingLevels\"][-1] == \"auto\" and \"low\" in d[\"capabilities\"][\"thinkingLevels\"]")" = true ]' "omp's levels, then auto ($(d 'd["capabilities"]["thinkingLevels"]'))" 10
+  [ "$(d 'd["capabilities"]["permissionModes"]')" = "[]" ] && ok "no permission-mode chip" || fail "modes $(d 'd["capabilities"]["permissionModes"]')"
+  shot omp-1-empty 0.5
+
+  step "omp: its approval select is a permission card, allowed with 1"
+  send_text "run the tests"
+  open_dialog permission "omp asks before bash"
+  [ "$(d 'd["dialog"]["title"]')" = "Allow bash?" ] && ok "titled \"Allow bash?\"" || fail "title $(d 'd["dialog"]["title"]')"
+  shot omp-2-permission 0.4
+  ask_key "text:1" '[ "$(d "d[\"dialog\"] is None and d[\"lastAnswer\"] is not None")" = true ]' "1 answers the card"
+  expect '[ "$(phase)" = idle ] && [ "$(last_tool status)" = done ]' "the command ran" 15
+  expect 'agent_log omp | grep "extension_ui_response" | tail -1 | grep -q "\"value\":\"Approve\""' "omp got Approve" 5
+
+  step "omp: a hashline edit's card: its file and a diff"
+  send_text "edit the file"
+  expect '[ "$(phase)" = idle ] && [ "$(last_tool title)" = "Edit src/a.ts" ]' "the edit card is titled by its file" 15
+  host | python3 -c 'import json,sys; t=[i for i in json.load(sys.stdin)["items"] if i["kind"]=="tool"][-1]; sys.exit(0 if "+export const a = 2;" in (t["detail"].get("diff") or "") else 1)' && ok "its diff (the host's item)" || fail "no diff on the edit card"
+  shot omp-3-edit 0.4
+
+  step "omp: /fork before the second message: a new session with the first, the message back in the composer"
+  SESSION=$(d 'd["sessionFile"]')
+  send_text "/fork"
+  expect '[ "$(d "d[\"picker\"][\"kind\"]")" = fork ] && [ "$(d "d[\"picker\"][\"count\"]")" = 2 ]' "/fork lists the two messages" 8
+  press enter '[ "$(d "d[\"picker\"]")" = null ]'
+  expect '[ "$(d "d[\"sessionFile\"]")" != "$SESSION" ] && [ "$(d "[i[\"text\"] for i in d[\"items\"] if i[\"kind\"]==\"user\"]")" = "[\"run the tests\"]" ]' "a new session holding the first message" 10
+  expect '[ "$(d "d[\"composer\"][\"text\"]")" = "edit the file" ]' "the message back in the composer" 5
+  expect 'agent_log omp | grep -q "\"type\":\"fork\""' "omp's fork" 5
+  cmd clear
+  expect '[ "$(d "d[\"composer\"][\"text\"]")" = "" ]' "the composer cleared" 5
+
+  step "omp: /tui hands the session to omp's TUI (--resume <file>), and the chat comes back"
+  : >"$FAKE_TUI_LOG"
+  FORKED=$(d 'd["sessionFile"]')
+  send_text "/tui"
+  expect 'grep -q -- "--resume $FORKED" "$FAKE_TUI_LOG"' "the hand-off argv: --resume <file> ($(tail -1 "$FAKE_TUI_LOG" 2>/dev/null))" 15
+  handoff_tui
+  hc send "$TUI" q >>"$LOG" 2>&1 || hc send --force "$TUI" q >>"$LOG" 2>&1
+  expect '[ "$(d "d[\"handoff\"]")" = null ] && [ "$(phase)" = idle ]' "back in the chat, omp resumed" 20
+  shot omp-4-back 0.4
 fi
 
 # --- LIVE=1 PROVIDER=claude|codex: the real agent, through the launcher --------------------

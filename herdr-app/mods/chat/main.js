@@ -1,4 +1,4 @@
-// chat (the herdr-chat mod): an agent (Pi, Claude Code, Codex) as a native chat in a Herdr tab. A `tab.new {mod: "chat",
+// chat (the herdr-chat mod): an agent (Pi, Claude Code, Codex, omp) as a native chat in a Herdr tab. A `tab.new {mod: "chat",
 // props: {chat, cwd}}` pane. It finds (or starts) the chat's herdr-chat-host in
 // a herdr-core terminal whose pane sits in this tab, hidden (hostpane.js: the
 // tab and the agents list show the agent's status, nothing draws the host),
